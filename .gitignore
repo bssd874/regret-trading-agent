@@ -20,3 +20,8 @@ Thumbs.db
 # Next.js
 node_modules/
 .next/ 
+
+# Local database
+*.db
+*.sqlite
+*.sqlite3
