@@ -2,13 +2,12 @@ from fastapi import FastAPI
 
 from backend.app.api.routes import router
 from backend.app.db.database import Base, engine
-
-#
-# Important:
-# Import SQLAlchemy models before create_all.
-#
-from backend.app.models.candidate_trade import CandidateTrade  # noqa: F401
-
+from backend.app.models import (  # noqa: F401
+    CandidateTrade,
+    CriticAnalysis,
+    DecisionAnalysis,
+    RiskDecision,
+)
 
 Base.metadata.create_all(bind=engine)
 
