@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from math import isfinite
+
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.historical.screener import ScreenerClient
 
@@ -15,6 +18,12 @@ from alpaca.data.enums import (
 from alpaca.trading.client import TradingClient
 
 from backend.app.core.config import settings
+
+
+@dataclass(frozen=True)
+class EvaluationPrice:
+    price: float
+    source: str
 
 
 class AlpacaService:
@@ -46,6 +55,31 @@ class AlpacaService:
         )
 
         return self.stock_client.get_stock_snapshot(request)
+
+    def get_evaluation_price(self, symbol: str) -> EvaluationPrice:
+        """Return the best available read-only Alpaca reference price."""
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("symbol must not be empty")
+
+        snapshot = self.get_snapshots([normalized]).get(normalized)
+        if snapshot is None:
+            raise LookupError(f"No Alpaca snapshot available for {normalized}")
+
+        candidates = (
+            (getattr(snapshot, "latest_trade", None), "price", "latest_trade"),
+            (getattr(snapshot, "minute_bar", None), "close", "minute_bar"),
+            (getattr(snapshot, "daily_bar", None), "close", "daily_bar"),
+        )
+        for item, attribute, source in candidates:
+            value = getattr(item, attribute, None) if item is not None else None
+            if value is None:
+                continue
+            price = float(value)
+            if isfinite(price) and price > 0:
+                return EvaluationPrice(price=price, source=source)
+
+        raise ValueError(f"No positive finite Alpaca price available for {normalized}")
 
     def get_market_movers(self, top: int = 10):
         request = MarketMoversRequest(

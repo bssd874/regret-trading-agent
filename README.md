@@ -80,4 +80,39 @@ Day 01 routing endpoints:
 - `GET /api/shadow-trades`
 - `GET /api/shadow-trades/{shadow_id}`
 
-Outcome evaluation, the Regret Engine, and the frontend are intentionally outside this milestone.
+The frontend remains intentionally outside the current backend milestones.
+
+## Day 02 outcome and regret layer
+
+```text
+ExecutedTrade + ShadowTrade
+  -> read-only Alpaca evaluation price
+  -> deterministic Outcome Engine
+  -> OutcomeSnapshot
+  -> deterministic Regret Engine
+  -> RegretEvent + Decision Value
+```
+
+Day 02 measures what happened after each decision without changing the original decision or performing any trading mutation. Shadow outcomes use the hypothetical entry and notional. Executed outcomes require a genuine completed fill and use its actual average fill price and quantity. Evaluation is due-time gated and idempotent: each source can have at most one outcome, and each outcome can have at most one regret event.
+
+Classifications:
+
+- `MISSED_ALPHA`: a rejected trade would have made money.
+- `AVOIDED_LOSS`: a rejected trade would not have made money.
+- `CORRECT_EXECUTION`: an accepted and executed trade made or preserved money.
+- `BAD_EXECUTION`: an accepted and executed trade lost money.
+
+For accepted trades, Decision Value equals realized outcome P&L. For rejected trades, it is the negative of hypothetical P&L. A positive value means the decision added or protected value; a negative value means it destroyed or missed value.
+
+Day 02 endpoints:
+
+- `POST /api/outcomes/evaluate-due`
+- `POST /api/shadow-trades/{shadow_id}/evaluate`
+- `POST /api/executions/{execution_id}/evaluate`
+- `GET /api/outcomes`
+- `GET /api/outcomes/{outcome_id}`
+- `GET /api/regret-events`
+- `GET /api/regret-events/{event_id}`
+- `GET /api/regret/metrics`
+
+The repository currently makes no claim of a live executed-trade evaluation; that requires a genuine filled paper execution. Outcome evaluation is read-only against Alpaca, and `PAPER_EXECUTION_ENABLED=false` remains the default and required Day 02 operating state.

@@ -20,11 +20,15 @@ from backend.app.services.decision_pipeline import decision_pipeline
 from backend.app.services.market_scout import market_scout
 
 from backend.app.models.executed_trade import ExecutedTrade
+from backend.app.models.outcome_snapshot import OutcomeSnapshot
+from backend.app.models.regret_event import RegretEvent
 from backend.app.models.shadow_trade import ShadowTrade
 from backend.app.services.decision_router import decision_router
 from backend.app.services.execution_sync_service import (
     execution_sync_service,
 )
+from backend.app.services.outcome_pipeline import outcome_pipeline
+from backend.app.services.regret_metrics_service import regret_metrics_service
 
 
 router = APIRouter()
@@ -45,6 +49,44 @@ def _execution_payload(execution: ExecutedTrade) -> dict:
         "submitted_at": execution.submitted_at,
         "created_at": execution.created_at,
         "paper": True,
+    }
+
+
+def _outcome_payload(outcome: OutcomeSnapshot) -> dict:
+    return {
+        "id": outcome.id,
+        "source_type": outcome.source_type,
+        "source_id": outcome.source_id,
+        "candidate_id": outcome.candidate_id,
+        "risk_decision_id": outcome.risk_decision_id,
+        "symbol": outcome.symbol,
+        "decision": outcome.decision,
+        "entry_price": outcome.entry_price,
+        "evaluation_price": outcome.evaluation_price,
+        "quantity": outcome.quantity,
+        "notional": outcome.notional,
+        "pnl_pct": outcome.pnl_pct,
+        "pnl_amount": outcome.pnl_amount,
+        "due_at": outcome.due_at,
+        "evaluated_at": outcome.evaluated_at,
+        "price_source": outcome.price_source,
+        "created_at": outcome.created_at,
+    }
+
+
+def _regret_event_payload(event: RegretEvent) -> dict:
+    return {
+        "id": event.id,
+        "outcome_id": event.outcome_id,
+        "candidate_id": event.candidate_id,
+        "risk_decision_id": event.risk_decision_id,
+        "symbol": event.symbol,
+        "decision": event.decision,
+        "classification": event.classification,
+        "pnl_pct": event.pnl_pct,
+        "pnl_amount": event.pnl_amount,
+        "decision_value": event.decision_value,
+        "created_at": event.created_at,
     }
 
 
@@ -428,3 +470,99 @@ def get_shadow_trade(
         "order_submitted":
             False,
     }
+
+
+def _evaluate_or_http_error(callback):
+    try:
+        return callback()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Read-only market outcome evaluation failed",
+        ) from exc
+
+
+@router.post("/outcomes/evaluate-due")
+def evaluate_due_outcomes(db: Session = Depends(get_db)):
+    return outcome_pipeline.evaluate_due(db=db)
+
+
+@router.post("/shadow-trades/{shadow_id}/evaluate")
+def evaluate_shadow_trade(
+    shadow_id: int,
+    db: Session = Depends(get_db),
+):
+    return _evaluate_or_http_error(
+        lambda: outcome_pipeline.evaluate_shadow(
+            db=db,
+            shadow_id=shadow_id,
+        )
+    )
+
+
+@router.post("/executions/{execution_id}/evaluate")
+def evaluate_executed_trade(
+    execution_id: int,
+    db: Session = Depends(get_db),
+):
+    return _evaluate_or_http_error(
+        lambda: outcome_pipeline.evaluate_execution(
+            db=db,
+            execution_id=execution_id,
+        )
+    )
+
+
+@router.get("/outcomes")
+def get_outcomes(db: Session = Depends(get_db)):
+    rows = list(
+        db.scalars(
+            select(OutcomeSnapshot)
+            .order_by(desc(OutcomeSnapshot.evaluated_at))
+            .limit(100)
+        ).all()
+    )
+    return [_outcome_payload(row) for row in rows]
+
+
+@router.get("/outcomes/{outcome_id}")
+def get_outcome(
+    outcome_id: int,
+    db: Session = Depends(get_db),
+):
+    outcome = db.get(OutcomeSnapshot, outcome_id)
+    if outcome is None:
+        raise HTTPException(status_code=404, detail="OutcomeSnapshot not found")
+    return _outcome_payload(outcome)
+
+
+@router.get("/regret-events")
+def get_regret_events(db: Session = Depends(get_db)):
+    rows = list(
+        db.scalars(
+            select(RegretEvent)
+            .order_by(desc(RegretEvent.created_at))
+            .limit(100)
+        ).all()
+    )
+    return [_regret_event_payload(row) for row in rows]
+
+
+@router.get("/regret-events/{event_id}")
+def get_regret_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+):
+    event = db.get(RegretEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="RegretEvent not found")
+    return _regret_event_payload(event)
+
+
+@router.get("/regret/metrics")
+def get_regret_metrics(db: Session = Depends(get_db)):
+    return regret_metrics_service.calculate(db=db)
