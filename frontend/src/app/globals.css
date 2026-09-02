@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  --background: #06090f;
+  --foreground: #edf3fb;
+  --muted: #8491a4;
+  --panel: #0c111b;
+  --line: rgba(145, 164, 190, 0.14);
+  --blue: #55a7ff;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: var(--background);
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 50% -20%, rgba(38, 102, 172, 0.18), transparent 38rem),
+    linear-gradient(180deg, #080c13 0%, #05070c 100%);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button, a { -webkit-tap-highlight-color: transparent; }
+
+button:focus-visible {
+  outline: 2px solid rgba(85, 167, 255, 0.9);
+  outline-offset: 2px;
+}
+
+::selection { background: rgba(85, 167, 255, 0.3); }
+
+.panel {
+  border: 1px solid var(--line);
+  background: linear-gradient(145deg, rgba(15, 22, 34, 0.92), rgba(8, 12, 20, 0.94));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.2);
+}
+
+.hairline-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.replay-line {
+  transform-origin: left center;
+  animation: draw-line 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.replay-dot {
+  animation: reveal-dot 450ms ease-out both;
+  animation-delay: 700ms;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #101722 25%, #172131 50%, #101722 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.35s infinite;
+}
+
+@keyframes draw-line {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes reveal-dot {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes shimmer { to { background-position-x: -200%; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

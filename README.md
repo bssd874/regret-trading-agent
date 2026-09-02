@@ -80,8 +80,6 @@ Day 01 routing endpoints:
 - `GET /api/shadow-trades`
 - `GET /api/shadow-trades/{shadow_id}`
 
-The frontend remains intentionally outside the current backend milestones.
-
 ## Day 02 outcome and regret layer
 
 ```text
@@ -116,3 +114,51 @@ Day 02 endpoints:
 - `GET /api/regret/metrics`
 
 The repository currently makes no claim of a live executed-trade evaluation; that requires a genuine filled paper execution. Outcome evaluation is read-only against Alpaca, and `PAPER_EXECUTION_ENABLED=false` remains the default and required Day 02 operating state.
+
+## Day 03 decision dashboard and replay
+
+The Next.js dashboard turns the decision ledger into an evidence-first review surface. It shows aggregate Decision Value, avoided loss, missed alpha, evaluation counts, the honest execution count, full analyst/critic reasoning, deterministic risk output, and a two-point counterfactual replay built only from recorded entry and evaluation prices. The dashboard is read-only: it contains no order, routing, scouting, analysis, or evaluation controls.
+
+The API permits browser reads only from `http://localhost:3000` and `http://127.0.0.1:3000`. Frontend configuration contains only the public backend location; provider and brokerage credentials stay in the backend environment.
+
+### Run locally
+
+Keep the backend safety switch disabled:
+
+```dotenv
+PAPER_EXECUTION_ENABLED=false
+```
+
+In one PowerShell terminal, run the API from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+In a second terminal, run the dashboard:
+
+```powershell
+cd frontend
+Copy-Item .env.example .env.local
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:3000`. The default `NEXT_PUBLIC_API_BASE_URL` already targets `http://127.0.0.1:8000`.
+
+### Recommended demo sequence
+
+1. Establish safety: point out the `PAPER MODE` badge, zero submitted orders, and absence of execution controls.
+2. Read the scorecard: compare Decision Value, avoided loss, and missed alpha.
+3. Select an evaluated decision from the feed and trace Scout → Analyst → Critic → Risk → Outcome.
+4. Call out `Fallback Critic` when degraded mode is recorded; the UI never presents fallback as primary NVIDIA review.
+5. Press **Replay** and compare the exact recorded entry and evaluation prices with the regret classification and Decision Value.
+
+### Frontend verification
+
+```powershell
+cd frontend
+npm run lint
+npm test
+npm run build
+```
