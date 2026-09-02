@@ -86,12 +86,13 @@ class AnalystResponse(StrictOutputModel):
 
 
 class CriticResponse(StrictOutputModel):
-    provider: Literal["nvidia"]
+    provider: Literal["nvidia", "azure-fallback"]
     model: str
     verdict: Literal["PASS", "CHALLENGE"]
     confidence_adjustment: float
     thesis_consistency: float
     concerns: list[str]
+    degraded_mode: bool = False
 
 
 class ConsensusResponse(StrictOutputModel):
@@ -130,6 +131,8 @@ class DecisionListItem(StrictOutputModel):
     critic_adjustment: float
     adjusted_confidence: float
     critic_verdict: Literal["PASS", "CHALLENGE"]
+    critic_provider: Literal["nvidia", "azure-fallback"] = "nvidia"
+    degraded_mode: bool = False
     reward_risk_ratio: float
     risk_score: float
     decision: Literal["ACCEPT", "REJECT"]

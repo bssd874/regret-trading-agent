@@ -106,18 +106,38 @@ class DecisionPipeline:
         db.commit()
         db.refresh(analysis)
 
-        # 2. Kimi can only criticize the primary analysis.
+        # 2. Kimi can only criticize the primary analysis. Azure may use the
+        # same strict critic schema only for a Kimi availability failure.
         self._set_status(db, candidate, "CRITIQUING")
 
         try:
-            critic_output = self.critic.critique(
-                candidate=candidate,
-                analysis=analysis_output,
+            critique_with_metadata = getattr(
+                self.critic,
+                "critique_with_metadata",
+                None,
             )
+            if critique_with_metadata is not None:
+                critic_review = critique_with_metadata(
+                    candidate=candidate,
+                    analysis=analysis_output,
+                )
+                critic_output = critic_review.output
+                critic_provider = critic_review.provider
+                critic_model = critic_review.model_name
+            else:
+                # Keeps injected deterministic test critics simple.
+                critic_output = self.critic.critique(
+                    candidate=candidate,
+                    analysis=analysis_output,
+                )
+                critic_provider = "nvidia"
+                critic_model = settings.nvidia_model
         except Exception as exc:
             db.rollback()
             self._set_status(db, candidate, "CRITIC_FAILED")
-            raise RuntimeError(f"Kimi critic failed: {exc}") from exc
+            raise RuntimeError(
+                "Kimi critic failed; any eligible availability fallback also failed"
+            ) from exc
 
         critic = CriticAnalysis(
             candidate_id=candidate.id,
@@ -126,8 +146,8 @@ class DecisionPipeline:
             confidence_adjustment=critic_output.confidence_adjustment,
             thesis_consistency=critic_output.thesis_consistency,
             concerns=json.dumps(critic_output.concerns),
-            provider="nvidia",
-            model_name=settings.nvidia_model,
+            provider=critic_provider,
+            model_name=critic_model,
         )
         db.add(critic)
         db.commit()
@@ -201,12 +221,13 @@ class DecisionPipeline:
                 "evidence": analysis_output.evidence_summary,
             },
             "critic": {
-                "provider": "nvidia",
-                "model": settings.nvidia_model,
+                "provider": critic.provider,
+                "model": critic.model_name,
                 "verdict": critic.verdict,
                 "confidence_adjustment": critic.confidence_adjustment,
                 "thesis_consistency": critic.thesis_consistency,
                 "concerns": critic_output.concerns,
+                "degraded_mode": critic.provider == "azure-fallback",
             },
             "consensus": {
                 "original_confidence": consensus_output.original_confidence,

@@ -19,8 +19,33 @@ from backend.app.services.alpaca_service import alpaca_service
 from backend.app.services.decision_pipeline import decision_pipeline
 from backend.app.services.market_scout import market_scout
 
+from backend.app.models.executed_trade import ExecutedTrade
+from backend.app.models.shadow_trade import ShadowTrade
+from backend.app.services.decision_router import decision_router
+from backend.app.services.execution_sync_service import (
+    execution_sync_service,
+)
+
 
 router = APIRouter()
+
+
+def _execution_payload(execution: ExecutedTrade) -> dict:
+    return {
+        "id": execution.id,
+        "candidate_id": execution.candidate_id,
+        "risk_decision_id": execution.risk_decision_id,
+        "symbol": execution.symbol,
+        "side": execution.side,
+        "requested_notional": execution.requested_notional,
+        "alpaca_order_id": execution.alpaca_order_id,
+        "status": execution.status,
+        "filled_qty": execution.filled_qty,
+        "filled_avg_price": execution.filled_avg_price,
+        "submitted_at": execution.submitted_at,
+        "created_at": execution.created_at,
+        "paper": True,
+    }
 
 
 def _load_json_list(value: str) -> list[str]:
@@ -55,12 +80,13 @@ def _decision_payload(
             "evidence": _load_json_list(analysis.evidence_summary),
         },
         "critic": {
-            "provider": "nvidia",
+            "provider": critic.provider,
             "model": critic.model_name,
             "verdict": critic.verdict,
             "confidence_adjustment": critic.confidence_adjustment,
             "thesis_consistency": critic.thesis_consistency,
             "concerns": _load_json_list(critic.concerns),
+            "degraded_mode": critic.provider == "azure-fallback",
         },
         "consensus": {
             "original_confidence": risk.original_confidence,
@@ -183,6 +209,8 @@ def get_decisions(db: Session = Depends(get_db)):
             "critic_adjustment": risk.critic_adjustment,
             "adjusted_confidence": risk.adjusted_confidence,
             "critic_verdict": critic.verdict,
+            "critic_provider": critic.provider,
+            "degraded_mode": critic.provider == "azure-fallback",
             "reward_risk_ratio": risk.reward_risk_ratio,
             "risk_score": risk.risk_score,
             "decision": risk.decision,
@@ -221,3 +249,182 @@ def get_decision(
 
     risk, analysis, critic = row
     return _decision_payload(risk, analysis, critic)
+
+@router.post("/decisions/{decision_id}/route")
+def route_decision(
+    decision_id: int,
+    db: Session = Depends(get_db),
+):
+    try:
+        return decision_router.route(
+            db=db,
+            decision_id=decision_id,
+        )
+
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+@router.get("/executions")
+def get_executions(
+    db: Session = Depends(get_db),
+):
+    statement = (
+        select(ExecutedTrade)
+        .order_by(
+            desc(ExecutedTrade.created_at)
+        )
+        .limit(50)
+    )
+
+    rows = list(
+        db.scalars(statement).all()
+    )
+
+    return [_execution_payload(row) for row in rows]
+
+@router.get("/executions/{execution_id}")
+def get_execution(
+    execution_id: int,
+    db: Session = Depends(get_db),
+):
+    execution = db.get(
+        ExecutedTrade,
+        execution_id,
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Execution not found",
+        )
+
+    return _execution_payload(execution)
+
+
+@router.post("/executions/{execution_id}/sync")
+def sync_execution(
+    execution_id: int,
+    db: Session = Depends(get_db),
+):
+    try:
+        execution = execution_sync_service.sync(
+            db=db,
+            execution_id=execution_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Alpaca paper order synchronization failed",
+        ) from exc
+
+    return _execution_payload(execution)
+
+@router.get("/shadow-trades")
+def get_shadow_trades(
+    db: Session = Depends(get_db),
+):
+    statement = (
+        select(ShadowTrade)
+        .order_by(
+            desc(ShadowTrade.opened_at)
+        )
+        .limit(50)
+    )
+
+    rows = list(
+        db.scalars(statement).all()
+    )
+
+    return [
+        {
+            "id": row.id,
+            "candidate_id":
+                row.candidate_id,
+            "risk_decision_id":
+                row.risk_decision_id,
+            "symbol": row.symbol,
+            "side": row.side,
+            "hypothetical_entry":
+                row.hypothetical_entry,
+            "hypothetical_notional":
+                row.hypothetical_notional,
+            "stop_loss":
+                row.stop_loss,
+            "target_price":
+                row.target_price,
+            "horizon_minutes":
+                row.horizon_minutes,
+            "status":
+                row.status,
+            "opened_at":
+                row.opened_at,
+            "evaluation_due_at":
+                row.evaluation_due_at,
+            "order_submitted":
+                False,
+        }
+        for row in rows
+    ]
+
+@router.get("/shadow-trades/{shadow_id}")
+def get_shadow_trade(
+    shadow_id: int,
+    db: Session = Depends(get_db),
+):
+    shadow = db.get(
+        ShadowTrade,
+        shadow_id,
+    )
+
+    if shadow is None:
+        raise HTTPException(
+            status_code=404,
+            detail="ShadowTrade not found",
+        )
+
+    return {
+        "id": shadow.id,
+        "candidate_id":
+            shadow.candidate_id,
+        "risk_decision_id":
+            shadow.risk_decision_id,
+        "symbol": shadow.symbol,
+        "side": shadow.side,
+        "hypothetical_entry":
+            shadow.hypothetical_entry,
+        "hypothetical_notional":
+            shadow.hypothetical_notional,
+        "stop_loss":
+            shadow.stop_loss,
+        "target_price":
+            shadow.target_price,
+        "horizon_minutes":
+            shadow.horizon_minutes,
+        "status":
+            shadow.status,
+        "opened_at":
+            shadow.opened_at,
+        "evaluation_due_at":
+            shadow.evaluation_due_at,
+        "order_submitted":
+            False,
+    }

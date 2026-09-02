@@ -1,12 +1,11 @@
-"""Disabled legacy entry point for the Day 30 paper-only backend.
-
-REGRET currently stops at candidate persistence. It does not submit orders,
-including paper orders.
-"""
+"""Safe legacy entry point; it deliberately performs no order mutation."""
 
 
 def main() -> None:
-    print("Order submission is disabled; REGRET stops at CandidateTrade.")
+    print(
+        "Direct submission is disabled. Use the DecisionRouter only after "
+        "a genuine ACCEPT and explicit PAPER_EXECUTION_ENABLED=true."
+    )
 
 
 if __name__ == "__main__":

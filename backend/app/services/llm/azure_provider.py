@@ -5,7 +5,7 @@ from backend.app.core.config import settings
 
 
 class AzureProvider:
-    """Azure OpenAI provider used only by the primary analyst."""
+    """Azure structured-output provider for analysis-only agents."""
 
     def __init__(self):
         endpoint = settings.azure_openai_endpoint.rstrip("/") + "/"
