@@ -1,4 +1,4 @@
-import { buildTwoPointGraph } from "@/lib/counterfactual-graph";
+import { buildTradeFillGraph, buildTwoPointGraph } from "@/lib/counterfactual-graph";
 import { formatCurrency } from "@/lib/presentation";
 
 export function CounterfactualGraph({
@@ -7,14 +7,20 @@ export function CounterfactualGraph({
   entryLabel,
   evaluationLabel,
   replayKey,
+  variant = "counterfactual",
 }: {
   entryPrice: number;
   evaluationPrice: number;
   entryLabel: string;
   evaluationLabel: string;
   replayKey: number;
+  variant?: "counterfactual" | "realized";
 }) {
-  const model = buildTwoPointGraph(entryPrice, evaluationPrice);
+  const model = variant === "realized"
+    ? buildTradeFillGraph(entryPrice, evaluationPrice)
+    : buildTwoPointGraph(entryPrice, evaluationPrice);
+  const realizedStroke = model.direction === "up" ? "#6ee7b7" : model.direction === "down" ? "#fca5a5" : "#92a3a8";
+  const stroke = variant === "realized" ? realizedStroke : "#687d84";
 
   return (
     <svg
@@ -30,7 +36,7 @@ export function CounterfactualGraph({
         className="replay-line"
         d={model.path}
         fill="none"
-        stroke="#687d84"
+        stroke={stroke}
         strokeDasharray="3 7"
         strokeLinecap="round"
         strokeWidth="2.25"
@@ -41,7 +47,7 @@ export function CounterfactualGraph({
             data-factual-point={point.kind}
             cx={point.x}
             cy={point.y}
-            fill="#92a3a8"
+            fill={variant === "realized" ? stroke : "#92a3a8"}
             r="5"
             stroke="#20292c"
             strokeWidth="2.5"

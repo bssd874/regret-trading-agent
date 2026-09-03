@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.agent_routes import router as agent_router
 from backend.app.api.routes import router
+from backend.app.core.config import settings
 from backend.app.db.database import Base, engine
 from backend.app import models as _models  # noqa: F401
 
@@ -25,10 +26,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=False,
     allow_methods=["GET"],
     allow_headers=["Accept", "Content-Type"],

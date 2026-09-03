@@ -1,8 +1,11 @@
-from typing import Literal
+import json
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
+    NoDecode,
     SettingsConfigDict,
 )
 
@@ -62,6 +65,10 @@ class Settings(BaseSettings):
     # =========================================================
     paper_execution_enabled: bool = False
 
+    # Public deployments must not let anonymous visitors start expensive
+    # autonomous cycles. This gate is independent from execution safety.
+    public_agent_trigger_enabled: bool = False
+
     # 0.02 = 2% of paper account equity
     execution_position_pct: float = Field(
         default=0.02,
@@ -120,6 +127,13 @@ class Settings(BaseSettings):
     # =========================================================
     database_url: str = "sqlite:///./regret.db"
 
+    # Browser access is read-only. Production adds the deployed frontend
+    # origin explicitly; wildcard origins are rejected.
+    cors_allowed_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
     # =========================================================
     # Environment
     # =========================================================
@@ -155,6 +169,67 @@ class Settings(BaseSettings):
     ) -> str:
         normalized = str(value).strip().lower()
         return normalized
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> str:
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("DATABASE_URL must not be empty")
+        if normalized.startswith("postgres://"):
+            return (
+                "postgresql+psycopg://"
+                + normalized[len("postgres://"):]
+            )
+        if normalized.startswith("postgresql://"):
+            return (
+                "postgresql+psycopg://"
+                + normalized[len("postgresql://"):]
+            )
+        return normalized
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def parse_cors_allowed_origins(cls, value: object) -> list[str]:
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.startswith("["):
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise ValueError("CORS_ALLOWED_ORIGINS is invalid JSON") from exc
+            else:
+                value = raw.split(",") if raw else []
+
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(
+                "CORS_ALLOWED_ORIGINS must be a list "
+                "or comma-separated string"
+            )
+
+        origins: list[str] = []
+        for item in value:
+            origin = str(item).strip().rstrip("/")
+            parsed = urlsplit(origin)
+            if (
+                origin == "*"
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS entries must be explicit HTTP(S) origins"
+                )
+            if origin not in origins:
+                origins.append(origin)
+
+        if not origins:
+            raise ValueError("CORS_ALLOWED_ORIGINS must contain at least one origin")
+        return origins
 
     @model_validator(mode="after")
     def validate_autonomous_cycle_window(self):

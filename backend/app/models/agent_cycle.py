@@ -35,6 +35,7 @@ class AgentCycle(Base):
             "status",
             unique=True,
             sqlite_where=text("status = 'RUNNING'"),
+            postgresql_where=text("status = 'RUNNING'"),
         ),
     )
 

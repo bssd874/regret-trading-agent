@@ -29,6 +29,8 @@ export type Translation = {
     missedAlpha: string;
     evaluated: string;
     paperExecutions: string;
+    correctExecutionValue: string;
+    badExecutionLoss: string;
     protectedDecision: string;
     protectedDecisions: string;
     rejectedWinner: string;
@@ -42,6 +44,7 @@ export type Translation = {
     confidence: string;
     risk: string;
     noTrade: string;
+    trade: string;
     replayReady: string;
     fallbackCritic: string;
     safeFailure: string;
@@ -52,6 +55,7 @@ export type Translation = {
     saidYes: string;
     rejectedQuestion: (symbol: string) => string;
     acceptedQuestion: (symbol: string) => string;
+    acceptedIntro: string;
     entryScenario: string;
     evaluatedAt: string;
     hypotheticalPerformance: string;
@@ -70,9 +74,26 @@ export type Translation = {
     entryPoint: string;
     evaluationPoint: string;
     factualPoints: string;
+    buy: string;
+    sell: string;
+    filledQuantity: string;
+    originalTarget: string;
+    originalStop: string;
+    originalHorizon: string;
+    minutes: string;
+    exitReason: string;
+    takeProfit: string;
+    stopLoss: string;
+    timeExit: string;
+    realizedPerformance: string;
+    realizedPnl: string;
+    classification: string;
+    confirmedFills: string;
+    neutralNarrative: string;
   };
   audit: {
     title: string;
+    tradeTitle: string;
     marketScout: string;
     candidateDiscovered: string;
     azureAnalyst: string;
@@ -85,6 +106,13 @@ export type Translation = {
     riskGate: string;
     noTrade: string;
     belowThreshold: string;
+    trade: string;
+    buyFilled: string;
+    exitMonitor: string;
+    exitReason: string;
+    sellFilled: string;
+    shadowOutcome: string;
+    regretClassification: string;
     persistedDetails: string;
     persistedNote: string;
     analystRecord: string;
@@ -140,6 +168,8 @@ export const translations: Record<Language, Translation> = {
       missedAlpha: "Missed Alpha",
       evaluated: "Evaluated",
       paperExecutions: "Paper Exec",
+      correctExecutionValue: "Correct Execution Value",
+      badExecutionLoss: "Bad Execution Loss",
       protectedDecision: "protected decision",
       protectedDecisions: "protected decisions",
       rejectedWinner: "rejected winner",
@@ -153,6 +183,7 @@ export const translations: Record<Language, Translation> = {
       confidence: "Conf",
       risk: "Risk",
       noTrade: "NO TRADE",
+      trade: "TRADE",
       replayReady: "Replay ready",
       fallbackCritic: "Fallback critic",
       safeFailure: "Stopped safely before risk or execution.",
@@ -163,6 +194,7 @@ export const translations: Record<Language, Translation> = {
       saidYes: "REGRET SAID YES.",
       rejectedQuestion: (symbol) => `What if REGRET had taken this trade on ${symbol}?`,
       acceptedQuestion: (symbol) => `What happened after REGRET traded ${symbol}?`,
+      acceptedIntro: "The agent entered this trade.",
       entryScenario: "Entry Scenario",
       evaluatedAt: "Evaluated At",
       hypotheticalPerformance: "Hypothetical Performance",
@@ -181,9 +213,26 @@ export const translations: Record<Language, Translation> = {
       entryPoint: "Entry",
       evaluationPoint: "Exit",
       factualPoints: "Two recorded price points only",
+      buy: "BUY",
+      sell: "SELL",
+      filledQuantity: "Filled Quantity",
+      originalTarget: "Original Target",
+      originalStop: "Original Stop",
+      originalHorizon: "Original Horizon",
+      minutes: "minutes",
+      exitReason: "Exit Reason",
+      takeProfit: "TAKE PROFIT",
+      stopLoss: "STOP LOSS",
+      timeExit: "TIME EXIT",
+      realizedPerformance: "Realized Performance",
+      realizedPnl: "Realized P&L",
+      classification: "Classification",
+      confirmedFills: "Two confirmed Alpaca Paper fills.",
+      neutralNarrative: "This evaluated decision produced no measured Decision Value.",
     },
     audit: {
       title: "Why did REGRET choose not to trade?",
+      tradeTitle: "How did REGRET complete this trade?",
       marketScout: "Market Scout",
       candidateDiscovered: "Candidate discovered",
       azureAnalyst: "Azure Analyst",
@@ -196,6 +245,13 @@ export const translations: Record<Language, Translation> = {
       riskGate: "Risk Gate",
       noTrade: "NO TRADE",
       belowThreshold: "Below 70% confidence threshold",
+      trade: "TRADE",
+      buyFilled: "BUY FILLED",
+      exitMonitor: "Exit Monitor",
+      exitReason: "Exit Reason",
+      sellFilled: "SELL FILLED",
+      shadowOutcome: "Shadow Outcome",
+      regretClassification: "Regret Classification",
       persistedDetails: "Persisted decision evidence",
       persistedNote: "Structured records only — never hidden chain-of-thought.",
       analystRecord: "Analyst record",
@@ -249,6 +305,8 @@ export const translations: Record<Language, Translation> = {
       missedAlpha: "Peluang Profit Terlewat",
       evaluated: "Keputusan Dievaluasi",
       paperExecutions: "Eksekusi Paper",
+      correctExecutionValue: "Nilai Eksekusi Berhasil",
+      badExecutionLoss: "Kerugian Eksekusi",
       protectedDecision: "keputusan dilindungi",
       protectedDecisions: "keputusan dilindungi",
       rejectedWinner: "pemenang ditolak",
@@ -262,6 +320,7 @@ export const translations: Record<Language, Translation> = {
       confidence: "Kep",
       risk: "Risiko",
       noTrade: "TIDAK MASUK",
+      trade: "MASUK",
       replayReady: "Replay siap",
       fallbackCritic: "Fallback Critic",
       safeFailure: "Dihentikan dengan aman sebelum risiko atau eksekusi.",
@@ -272,13 +331,14 @@ export const translations: Record<Language, Translation> = {
       saidYes: "REGRET MEMILIH MASUK.",
       rejectedQuestion: () => "Bagaimana jika REGRET mengambil trade ini?",
       acceptedQuestion: (symbol) => `Apa yang terjadi setelah REGRET mengambil trade ${symbol}?`,
+      acceptedIntro: "Agent mengambil trade ini.",
       entryScenario: "Harga Masuk",
       evaluatedAt: "Harga Evaluasi",
       hypotheticalPerformance: "Performa Hipotetis",
       avoidedLoss: "Kerugian Dihindari",
       missedAlpha: "Peluang Profit Terlewat",
-      correctExecution: "Eksekusi Tepat",
-      badExecution: "Eksekusi Buruk",
+      correctExecution: "Eksekusi Berhasil",
+      badExecution: "Eksekusi Merugi",
       avoidedNarrative: (value) => `Keputusan ini melindungi nilai sebesar ${value}.`,
       missedNarrative: (value) => `Keputusan ini melewatkan potensi keuntungan sebesar ${value}.`,
       correctNarrative: (value) => `Keputusan ini menghasilkan nilai sebesar ${value}.`,
@@ -290,9 +350,26 @@ export const translations: Record<Language, Translation> = {
       entryPoint: "Masuk",
       evaluationPoint: "Evaluasi",
       factualPoints: "Hanya dua titik harga tercatat",
+      buy: "BELI",
+      sell: "JUAL",
+      filledQuantity: "Jumlah Terisi",
+      originalTarget: "Target Awal",
+      originalStop: "Stop Awal",
+      originalHorizon: "Horizon Awal",
+      minutes: "menit",
+      exitReason: "Alasan Keluar",
+      takeProfit: "AMBIL PROFIT",
+      stopLoss: "STOP LOSS",
+      timeExit: "BATAS WAKTU",
+      realizedPerformance: "Performa Realisasi",
+      realizedPnl: "P&L Realisasi",
+      classification: "Klasifikasi",
+      confirmedFills: "Dua fill Alpaca Paper yang terkonfirmasi.",
+      neutralNarrative: "Keputusan yang dievaluasi ini tidak menghasilkan Nilai Keputusan terukur.",
     },
     audit: {
       title: "Mengapa REGRET memilih tidak masuk?",
+      tradeTitle: "Bagaimana REGRET menyelesaikan trade ini?",
       marketScout: "Market Scout",
       candidateDiscovered: "Kandidat ditemukan",
       azureAnalyst: "Azure Analyst",
@@ -305,6 +382,13 @@ export const translations: Record<Language, Translation> = {
       riskGate: "Risk Gate",
       noTrade: "TIDAK MASUK",
       belowThreshold: "Di bawah ambang kepercayaan 70%",
+      trade: "MASUK",
+      buyFilled: "BELI TERISI",
+      exitMonitor: "Monitor Keluar",
+      exitReason: "Alasan Keluar",
+      sellFilled: "JUAL TERISI",
+      shadowOutcome: "Hasil Shadow",
+      regretClassification: "Klasifikasi Regret",
       persistedDetails: "Bukti keputusan tersimpan",
       persistedNote: "Hanya catatan terstruktur — bukan proses berpikir tersembunyi.",
       analystRecord: "Catatan Analyst",
@@ -352,7 +436,22 @@ export function decisionStatusLabel(
   if (status === "REJECT" || status === "REJECTED") {
     return translations[language].stream.noTrade;
   }
+  if (status === "ACCEPT" || status === "ACCEPTED") {
+    return translations[language].stream.trade;
+  }
   return status;
+}
+
+export function exitReasonLabel(
+  reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT",
+  language: Language,
+): string {
+  const copy = translations[language].replay;
+  return {
+    TAKE_PROFIT: copy.takeProfit,
+    STOP_LOSS: copy.stopLoss,
+    TIME_EXIT: copy.timeExit,
+  }[reason];
 }
 
 export function agentStatusLabel(

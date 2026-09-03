@@ -111,6 +111,7 @@ def test_manual_run_once_honors_execution_kill_switch(
     monkeypatch,
     db_session,
 ):
+    monkeypatch.setattr(settings, "public_agent_trigger_enabled", True)
     router = MagicMock()
     agent = AutonomousAgent(
         scout=FakeScout(("MANUAL",)),
@@ -136,6 +137,7 @@ def test_manual_run_once_honors_execution_kill_switch(
 
 
 def test_manual_run_once_rejects_overlap(monkeypatch, db_session):
+    monkeypatch.setattr(settings, "public_agent_trigger_enabled", True)
     now = datetime.now(timezone.utc)
     db_session.add(
         AgentCycle(
@@ -161,3 +163,24 @@ def test_manual_run_once_rejects_overlap(monkeypatch, db_session):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "AGENT_CYCLE_ALREADY_RUNNING"
+
+
+def test_public_manual_trigger_disabled_fails_before_agent_work(
+    monkeypatch,
+    db_session,
+):
+    blocked_agent = MagicMock()
+    monkeypatch.setattr(settings, "public_agent_trigger_enabled", False)
+    monkeypatch.setattr(agent_routes, "autonomous_agent", blocked_agent)
+
+    with _client(db_session) as client:
+        response = client.post("/api/agent/run-once")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "Manual autonomous cycle triggering is disabled for this deployment."
+    )
+    assert db_session.query(AgentCycle).count() == 0
+    blocked_agent.run_cycle.assert_not_called()
+    blocked_agent.scout.run.assert_not_called()
+    blocked_agent.pipeline.run.assert_not_called()

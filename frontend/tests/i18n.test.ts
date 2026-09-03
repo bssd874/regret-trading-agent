@@ -8,6 +8,7 @@ import {
 import {
   LANGUAGE_STORAGE_KEY,
   decisionStatusLabel,
+  exitReasonLabel,
   selectLanguage,
   translations,
 } from "../src/i18n/translations";
@@ -41,6 +42,24 @@ test("saved language is restored separately from initial render", () => {
 test("a normal reject is localized as no trade", () => {
   assert.equal(decisionStatusLabel("REJECT", "en"), "NO TRADE");
   assert.equal(decisionStatusLabel("REJECT", "id"), "TIDAK MASUK");
+});
+
+test("an accepted decision is localized as trade", () => {
+  assert.equal(decisionStatusLabel("ACCEPT", "en"), "TRADE");
+  assert.equal(decisionStatusLabel("ACCEPT", "id"), "MASUK");
+});
+
+test("realized replay and exit reasons have EN and ID coverage", () => {
+  assert.equal(translations.en.replay.buy, "BUY");
+  assert.equal(translations.en.replay.sell, "SELL");
+  assert.equal(translations.en.replay.badExecution, "Bad Execution");
+  assert.equal(translations.en.replay.correctExecution, "Correct Execution");
+  assert.equal(exitReasonLabel("TIME_EXIT", "en"), "TIME EXIT");
+  assert.equal(translations.id.replay.buy, "BELI");
+  assert.equal(translations.id.replay.sell, "JUAL");
+  assert.equal(translations.id.replay.badExecution, "Eksekusi Merugi");
+  assert.equal(translations.id.replay.correctExecution, "Eksekusi Berhasil");
+  assert.equal(exitReasonLabel("TIME_EXIT", "id"), "BATAS WAKTU");
 });
 
 test("pipeline failure states remain explicit failures", () => {

@@ -25,3 +25,6 @@ node_modules/
 *.db
 *.sqlite
 *.sqlite3
+
+# One-time persisted demo exports (transfer securely; do not commit)
+regret-demo-*.json

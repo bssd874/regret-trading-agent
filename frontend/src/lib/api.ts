@@ -1,6 +1,21 @@
-export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
-).replace(/\/$/, "");
+export function resolveApiBaseUrl(value?: string): string {
+  const candidate = value?.trim() || "http://127.0.0.1:8000";
+  const parsed = new URL(candidate);
+  if (
+    !["http:", "https:"].includes(parsed.protocol)
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+  ) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL must be a public HTTP(S) base URL");
+  }
+  return candidate.replace(/\/$/, "");
+}
+
+export const API_BASE_URL = resolveApiBaseUrl(
+  process.env.NEXT_PUBLIC_API_BASE_URL,
+);
 
 export type Health = {
   status: string;
@@ -15,6 +30,7 @@ export type AgentStatus = {
   max_candidates_per_cycle: number;
   paper: true;
   paper_execution_enabled: boolean;
+  new_entries_enabled: boolean;
   running: boolean;
   last_cycle_status: string | null;
   last_cycle_started_at: string | null;
@@ -111,6 +127,30 @@ export type Execution = {
   paper: true;
 };
 
+export type TradeExit = {
+  id: number;
+  executed_trade_id: number;
+  candidate_id: number;
+  risk_decision_id: number;
+  symbol: string;
+  reason: "TAKE_PROFIT" | "STOP_LOSS" | "TIME_EXIT";
+  trigger_price: number;
+  target_price: number;
+  stop_loss: number;
+  horizon_minutes: number;
+  requested_qty: number;
+  alpaca_order_id: string | null;
+  status: string;
+  filled_qty: number | null;
+  filled_avg_price: number | null;
+  triggered_at: string;
+  submitted_at: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  paper: true;
+};
+
 export type ShadowTrade = {
   id: number;
   candidate_id: number;
@@ -184,6 +224,7 @@ export type DashboardData = {
   candidates: Candidate[];
   decisions: DecisionListItem[];
   executions: Execution[];
+  exits: TradeExit[];
   shadowTrades: ShadowTrade[];
   outcomes: Outcome[];
   regretEvents: RegretEvent[];
@@ -232,6 +273,8 @@ export const api = {
     request<DecisionDetail>(`/api/decisions/${id}`, signal),
   getExecutions: (signal?: AbortSignal) =>
     request<Execution[]>("/api/executions", signal),
+  getExits: (signal?: AbortSignal) =>
+    request<TradeExit[]>("/api/exits", signal),
   getShadowTrades: (signal?: AbortSignal) =>
     request<ShadowTrade[]>("/api/shadow-trades", signal),
   getOutcomes: (signal?: AbortSignal) =>
@@ -281,6 +324,7 @@ export async function loadDashboardData(
     candidates,
     decisions,
     executions,
+    exits,
     shadowTrades,
     outcomes,
     regretEvents,
@@ -291,6 +335,7 @@ export async function loadDashboardData(
     safely("candidates", api.getCandidates(signal), []),
     safely("decisions", api.getDecisions(signal), []),
     safely("executions", api.getExecutions(signal), []),
+    safely("exits", api.getExits(signal), []),
     safely("shadow trades", api.getShadowTrades(signal), []),
     safely("outcomes", api.getOutcomes(signal), []),
     safely("regret events", api.getRegretEvents(signal), []),
@@ -304,6 +349,7 @@ export async function loadDashboardData(
       candidates,
       decisions,
       executions,
+      exits,
       shadowTrades,
       outcomes,
       regretEvents,

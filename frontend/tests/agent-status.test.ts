@@ -34,7 +34,25 @@ test("agent status strings switch to Indonesian", () => {
     agentStatusLabel({ enabled: true, paper_execution_enabled: false }, "id"),
     "AGENT AKTIF · OBSERVASI",
   );
+  assert.equal(
+    agentStatusLabel({ enabled: true, paper_execution_enabled: true }, "id"),
+    "AGENT AKTIF · PAPER OTONOM",
+  );
   assert.equal(translations.id.header.lastCycle, "Siklus terakhir");
+});
+
+test("dashboard consumes exits and renders realized fields as read-only data", () => {
+  const dashboardSource = readFileSync(
+    new URL("../src/components/dashboard.tsx", import.meta.url),
+    "utf8",
+  );
+  const apiSource = readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+
+  assert.match(apiSource, /getExits:[\s\S]*\/api\/exits/);
+  assert.match(dashboardSource, /copy\.replay\.buy/);
+  assert.match(dashboardSource, /copy\.replay\.sell/);
+  assert.match(dashboardSource, /copy\.replay\.realizedPnl/);
+  assert.match(dashboardSource, /tradeExit\.reason/);
 });
 
 test("dashboard introduces no manual trading controls", () => {

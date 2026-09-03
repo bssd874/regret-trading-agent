@@ -148,6 +148,14 @@ def get_agent_cycle(
 
 @router.post("/run-once")
 def run_agent_once(db: Session = Depends(get_db)):
+    if not settings.public_agent_trigger_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Manual autonomous cycle triggering is disabled "
+                "for this deployment."
+            ),
+        )
     try:
         cycle = autonomous_agent.run_cycle(db=db, trigger="MANUAL")
     except AgentCycleAlreadyRunning as exc:

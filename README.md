@@ -122,7 +122,7 @@ Day 02 endpoints:
 - `GET /api/regret-events/{event_id}`
 - `GET /api/regret/metrics`
 
-The repository currently makes no claim of a live executed-trade evaluation; that requires a genuine filled paper execution. Outcome evaluation is read-only against Alpaca, and `PAPER_EXECUTION_ENABLED=false` remains the default and required Day 02 operating state.
+The verified autonomous Alpaca PAPER execution and realized outcome evidence are documented below. Outcome evaluation remains read-only against Alpaca.
 
 ## REGRET Autonomous Loop
 
@@ -176,7 +176,7 @@ Autonomous observability endpoints:
 - `GET /api/exits`
 - `GET /api/exits/{exit_id}`
 
-Manual run-once is available for a controlled test or demo even when the recurring worker is disabled. It runs one normal cycle and honors all paper-only and execution kill switches.
+Manual run-once is available only when `PUBLIC_AGENT_TRIGGER_ENABLED=true`. Public deployments keep this flag `false`, returning HTTP 403 before Scout, LLM, market-data, or `AgentCycle` work begins.
 
 ## Verified Autonomous Paper Execution
 
@@ -231,13 +231,42 @@ FILLED BUY
 
 Position monitoring uses only the original persisted `target_price`, `stop_loss`, and `horizon_minutes`; no LLM changes exit levels. A `TradeExit` is reserved before Alpaca is contacted, ambiguous submission failures are not retried automatically, and pending SELL orders are reconciled read-only in later cycles. An executed ACCEPT outcome remains `NOT_READY` with `POSITION_STILL_OPEN` until both BUY and SELL have genuine fills. Realized P&L then uses Alpaca's actual entry fill, exit fill, and closed quantity with `price_source=alpaca_exit_fill`.
 
-The autonomous SELL lifecycle is implemented and covered by mocked integration tests, but it has **not** yet been verified by selling the existing real TSLA paper position. No real SELL should be run without explicit user approval.
+The TSLA paper position was subsequently closed by the autonomous `TIME_EXIT` path and reconciled to a genuine SELL fill. That persisted BUY/SELL evidence drives the realized replay; it is not hardcoded into the frontend.
+
+## Public deployment
+
+The final public demo architecture is Vercel (read-only Next.js terminal) plus a
+Railway FastAPI service, a separate Railway autonomous worker, and one shared
+Railway PostgreSQL database. Alpaca remains PAPER-only; Azure OpenAI, NVIDIA,
+Alpaca, and database credentials remain server-side.
+
+The hosted jury profile is autonomous **OBSERVE** mode:
+
+```dotenv
+ALPACA_PAPER=true
+AUTONOMOUS_AGENT_ENABLED=true
+AUTONOMOUS_NEW_ENTRIES_ENABLED=true
+PAPER_EXECUTION_ENABLED=false
+PUBLIC_AGENT_TRIGGER_ENABLED=false
+AUTONOMOUS_CYCLE_SECONDS=300
+AUTONOMOUS_STALE_CYCLE_SECONDS=900
+```
+
+The worker can discover and evaluate fresh decisions, but genuine accepts are
+held and no new Alpaca PAPER order is submitted. The public dashboard still
+shows the verified persisted BUY → `TIME_EXIT` → SELL lifecycle, realized P&L,
+and counterfactual examples without asking a judge to trade. Live-money trading
+is not supported.
+
+Deployment commands, PostgreSQL initialization, explicit demo-data migration,
+CORS setup, Vercel/Railway configuration, validation, and the public API audit
+are documented in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Day 03 decision dashboard and replay
 
 The Next.js dashboard turns the decision ledger into an evidence-first review surface. It shows aggregate Decision Value, avoided loss, missed alpha, evaluation counts, the honest execution count, full analyst/critic reasoning, deterministic risk output, and a two-point counterfactual replay built only from recorded entry and evaluation prices. The dashboard is read-only: it contains no order, routing, scouting, analysis, or evaluation controls.
 
-The API permits browser reads only from `http://localhost:3000` and `http://127.0.0.1:3000`. Frontend configuration contains only the public backend location; provider and brokerage credentials stay in the backend environment.
+The API permits browser reads only from explicit `CORS_ALLOWED_ORIGINS`; local origins are the development fallback and the Vercel origin is configured at deployment. Frontend configuration contains only the public backend location; provider, brokerage, and database credentials stay in the backend environment.
 
 ### Run locally
 

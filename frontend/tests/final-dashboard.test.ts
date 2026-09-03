@@ -3,9 +3,13 @@ import test from "node:test";
 
 import {
   buildTwoPointGraph,
+  buildTradeFillGraph,
   graphDirection,
 } from "../src/lib/counterfactual-graph";
 import {
+  featuredReplayDecisionId,
+  isMaterialDecisionValue,
+  orderReplayDecisions,
   persistedReplayDecisionIds,
   signedDecisionValue,
   unsignedMagnitude,
@@ -52,4 +56,40 @@ test("graph model contains only the two factual price points", () => {
   assert.equal(graph.points.length, 2);
   assert.deepEqual(graph.points.map((point) => point.kind), ["entry", "evaluation"]);
   assert.deepEqual(graph.points.map((point) => point.price), [10, 12]);
+});
+
+test("trade graph contains only factual BUY and SELL fills", () => {
+  const graph = buildTradeFillGraph(383.042, 382.432);
+  assert.equal(graph.points.length, 2);
+  assert.deepEqual(graph.points.map((point) => point.kind), ["buy", "sell"]);
+  assert.deepEqual(graph.points.map((point) => point.price), [383.042, 382.432]);
+});
+
+test("zero-value events are not selected as the featured replay", () => {
+  const outcomes = [{ risk_decision_id: 1 }, { risk_decision_id: 2 }];
+  const events = [
+    { risk_decision_id: 1, decision_value: 0 },
+    { risk_decision_id: 2, decision_value: -0.15924 },
+  ];
+  assert.equal(featuredReplayDecisionId(outcomes, events), 2);
+  assert.equal(
+    featuredReplayDecisionId([{ risk_decision_id: 1 }], [{ risk_decision_id: 1, decision_value: 0 }]),
+    null,
+  );
+  assert.equal(isMaterialDecisionValue(0), false);
+});
+
+test("material replay outcomes are preferred without changing the selected decision", () => {
+  const decisions = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  const events = [
+    { risk_decision_id: 1, decision_value: 0 },
+    { risk_decision_id: 2, decision_value: -22.77 },
+    { risk_decision_id: 3, decision_value: 835.75 },
+  ];
+  assert.deepEqual(orderReplayDecisions(decisions, events, 2).map((item) => item.id), [2, 3, 1]);
+});
+
+test("realized ACCEPT Decision Value preserves both loss and profit signs", () => {
+  assert.equal(signedDecisionValue(-0.15924), -0.15924);
+  assert.equal(signedDecisionValue(12.5), 12.5);
 });
