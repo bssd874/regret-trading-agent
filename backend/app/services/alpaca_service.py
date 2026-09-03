@@ -49,6 +49,13 @@ class AlpacaService:
     def get_account(self):
         return self.trading_client.get_account()
 
+    def get_asset(self, symbol: str):
+        """Return read-only paper-account eligibility metadata for a symbol."""
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("symbol must not be empty")
+        return self.trading_client.get_asset(normalized)
+
     def get_snapshots(self, symbols: list[str]):
         request = StockSnapshotRequest(
             symbol_or_symbols=symbols,

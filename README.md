@@ -36,12 +36,21 @@ Copy `.env.example` to `.env` and provide paper-account and provider credentials
 ALPACA_PAPER=true
 PAPER_EXECUTION_ENABLED=false
 EXECUTION_POSITION_PCT=0.02
+MARKET_SCOUT_MIN_PRICE=5.0
+MARKET_SCOUT_MIN_PREVIOUS_DAILY_VOLUME=500000
+MARKET_SCOUT_MAX_DAILY_CHANGE_PCT=25.0
 NVIDIA_TIMEOUT_SECONDS=60
 NVIDIA_MAX_TOKENS=512
 NVIDIA_REASONING_EFFORT=low
 ```
 
 `.env` and local SQLite databases are ignored by Git.
+
+### Evidence calibration and candidate quality
+
+The analyst is instructed to calibrate confidence across the full continuous `[0, 1]` range using only supplied evidence. It is not instructed to become bullish, meet the Risk Engine threshold, or round confidence into fixed buckets. The critic independently tests the thesis: `PASS` requires no material concern and an adjustment of exactly `0`; `CHALLENGE` requires at least one concrete concern grounded in supplied candidate or analysis fields and a strictly negative adjustment no lower than `-0.20`. NVIDIA Kimi and the availability-only Azure fallback receive the same prompt and strict schema.
+
+Before any candidate reaches an LLM, Market Scout applies deterministic quality gates. An asset must be active US equity metadata on a supported US exchange, tradable, and fractionable. Identifiable warrants, units, and rights are excluded by asset name. The snapshot must have a price of at least `$5.00`, positive current volume, at least `500,000` shares in the previous completed daily bar, and a positive daily move no greater than `25%`. These bounds are configurable with the `MARKET_SCOUT_*` variables above. If the movers feed is unavailable or every mover fails the gates, the existing liquid `AAPL/MSFT/NVDA/AMD/AMZN/META/GOOGL/TSLA/SPY/QQQ` watchlist is screened through the same gates.
 
 ## Tests
 

@@ -255,6 +255,7 @@ def test_accept_with_mocked_paper_execution_creates_one_executed_trade(
     monkeypatch,
 ):
     monkeypatch.setattr(settings, "paper_execution_enabled", True)
+    monkeypatch.setattr(settings, "execution_position_pct", 0.02)
     candidate = candidate_factory()
     risk, _ = _create_routing_chain(
         db_session,

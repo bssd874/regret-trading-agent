@@ -105,14 +105,15 @@ class CriticAgent:
         }
 
         prompt = f"""
-You are the ADVERSARIAL CRITIC for REGRET.
+You are the INDEPENDENT ADVERSARIAL CRITIC for REGRET.
 
 The primary analyst has proposed a LONG paper-trading analysis.
 
 Your job is NOT to create another trade.
 
-Your job is to challenge the primary analyst using ONLY
-the supplied evidence.
+Your job is to test the primary analyst using ONLY the supplied evidence.
+Adversarial means checking the thesis rigorously, not defaulting to CHALLENGE.
+Do not invent or manufacture a concern merely to reduce confidence.
 
 IMPORTANT RULES:
 
@@ -174,15 +175,18 @@ Allowed verdict values:
 
 Rules for PASS:
 
-- Use PASS only if there is no meaningful issue
-  with the primary analyst's reasoning.
+- Use PASS when the thesis is internally consistent, its claims are
+  proportionate to the supplied evidence, and no material concern justifies
+  reducing confidence.
 - confidence_adjustment MUST be exactly 0.0.
+- concerns MUST be an empty array.
 
 Rules for CHALLENGE:
 
-- Use CHALLENGE if the thesis is overconfident,
-  weakly supported, contradictory, or unrealistic.
-- confidence_adjustment MUST be between -0.20 and 0.0.
+- Use CHALLENGE only when one or more concrete concerns grounded in a supplied
+  candidate or analysis field materially weaken the thesis.
+- confidence_adjustment MUST be negative and no less than -0.20.
+- concerns MUST contain at least one concrete evidence-based concern.
 - Never use a positive confidence adjustment.
 
 Rules for thesis_consistency:

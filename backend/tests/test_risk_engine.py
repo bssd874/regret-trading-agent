@@ -1,6 +1,11 @@
 from backend.app.services.risk_engine import (
+    MIN_CONFIDENCE,
     risk_engine,
 )
+
+
+def test_minimum_confidence_threshold_remains_point_seven():
+    assert MIN_CONFIDENCE == 0.70
 
 
 def test_accept_good_trade():

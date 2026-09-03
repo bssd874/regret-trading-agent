@@ -70,6 +70,27 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # Deterministic Market Scout quality gate
+    # =========================================================
+    market_scout_min_price: float = Field(
+        default=5.0,
+        gt=0,
+        le=1000,
+    )
+
+    market_scout_min_previous_daily_volume: int = Field(
+        default=500_000,
+        ge=1,
+        le=100_000_000,
+    )
+
+    market_scout_max_daily_change_pct: float = Field(
+        default=25.0,
+        gt=0,
+        le=100,
+    )
+
+    # =========================================================
     # Autonomous orchestration
     # =========================================================
     autonomous_agent_enabled: bool = False

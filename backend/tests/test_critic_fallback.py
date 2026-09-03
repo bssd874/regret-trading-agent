@@ -20,9 +20,11 @@ class FakeProvider:
         self.error = error
         self.calls = 0
         self.response_model = None
+        self.prompts = []
 
     def generate(self, prompt, *, response_model):
         self.calls += 1
+        self.prompts.append(prompt)
         self.response_model = response_model
         if self.error is not None:
             raise self.error
@@ -86,6 +88,8 @@ def test_kimi_timeout_invokes_strict_azure_fallback(candidate_factory):
     assert review.model_name == settings.azure_openai_deployment
     assert review.degraded_mode is True
     assert fallback.response_model is CriticAnalysisOutput
+    assert primary.prompts == fallback.prompts
+    assert "not defaulting to CHALLENGE" in fallback.prompts[0]
 
 
 @pytest.mark.parametrize("status_code", [429, 500, 503])

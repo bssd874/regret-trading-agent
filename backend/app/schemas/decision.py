@@ -64,8 +64,16 @@ class CriticAnalysisOutput(StrictOutputModel):
 
     @model_validator(mode="after")
     def validate_verdict(self):
-        if self.verdict == "PASS" and self.confidence_adjustment != 0.0:
-            raise ValueError("PASS must use confidence_adjustment=0")
+        if self.verdict == "PASS":
+            if self.confidence_adjustment != 0.0:
+                raise ValueError("PASS must use confidence_adjustment=0")
+            if self.concerns:
+                raise ValueError("PASS must not include material concerns")
+        else:
+            if self.confidence_adjustment >= 0.0:
+                raise ValueError("CHALLENGE must reduce confidence")
+            if not self.concerns:
+                raise ValueError("CHALLENGE must include a concrete concern")
 
         return self
 

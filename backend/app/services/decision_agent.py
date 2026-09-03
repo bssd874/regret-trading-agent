@@ -69,7 +69,13 @@ IMPORTANT RULES:
 - Do NOT invent news, fundamentals,
   analyst ratings, earnings, macro events,
   or external market data.
-- Be conservative.
+- Calibrate confidence to the strength and limits of the supplied evidence.
+- Use the full continuous 0-to-1 confidence range when warranted.
+- Do not round confidence into fixed buckets such as 0.5, 0.6, or 0.7.
+- High confidence requires unusually strong, internally consistent supplied
+  evidence; weak or conflicting evidence requires lower confidence.
+- Being conservative means representing uncertainty accurately, not applying
+  an automatic confidence ceiling.
 - The supplied reference price is the only
   current market-price reference available.
 
@@ -97,6 +103,8 @@ Required schema:
 Constraints:
 
 - confidence must be between 0 and 1
+- confidence must reflect only the supplied evidence and must not be increased
+  merely to make a candidate pass downstream risk controls
 - entry_price must stay within 2 percent
   of the supplied reference price
 - stop_loss must be below entry_price

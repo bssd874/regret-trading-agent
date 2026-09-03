@@ -41,12 +41,23 @@ def test_autonomous_defaults_are_safe():
     assert configured.autonomous_stale_cycle_seconds == 900
 
 
+def test_market_scout_quality_defaults_are_conservative():
+    configured = Settings(_env_file=None, **_settings_values())
+    assert configured.market_scout_min_price == 5.0
+    assert configured.market_scout_min_previous_daily_volume == 500_000
+    assert configured.market_scout_max_daily_change_pct == 25.0
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {"autonomous_cycle_seconds": 0},
         {"autonomous_max_candidates_per_cycle": 0},
         {"autonomous_max_candidates_per_cycle": 11},
+        {"market_scout_min_price": 0},
+        {"market_scout_min_previous_daily_volume": 0},
+        {"market_scout_max_daily_change_pct": 0},
+        {"market_scout_max_daily_change_pct": 101},
         {
             "autonomous_cycle_seconds": 300,
             "autonomous_stale_cycle_seconds": 300,
