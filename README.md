@@ -173,6 +173,41 @@ Autonomous observability endpoints:
 
 Manual run-once is available for a controlled test or demo even when the recurring worker is disabled. It runs one normal cycle and honors all paper-only and execution kill switches.
 
+## Verified Autonomous Paper Execution
+
+On September 3, 2026, REGRET completed its first verified end-to-end real autonomous Alpaca PAPER execution from market discovery through confirmed order fill. The `ACCEPT` was produced naturally by genuine autonomous AgentCycle #20: no historical decision was modified, no human selected TSLA for execution, and no human clicked BUY.
+
+```text
+Market Scout
+→ Analyst
+→ Adversarial Critic
+→ Consensus
+→ Risk Gate
+→ ACCEPT
+→ Alpaca Paper Order
+→ Automatic Reconciliation
+→ FILLED
+```
+
+| Field                | Value         |
+| -------------------- | ------------- |
+| Agent Cycle          | #20           |
+| Candidate            | #49           |
+| Symbol               | TSLA          |
+| Risk Decision        | #24 — ACCEPT  |
+| Executed Trade       | #1            |
+| Order Submission     | Automatic     |
+| Initial Status       | `pending_new` |
+| Reconciliation       | Automatic     |
+| Final Status         | `FILLED`      |
+| Filled Quantity      | 0.26104187    |
+| Filled Average Price | $383.042      |
+| Human BUY Action     | None          |
+
+This verifies that REGRET can autonomously discover an opportunity, analyze it, pass deterministic risk controls, submit an Alpaca Paper order, and reconcile the execution to a confirmed fill without a human selecting or buying the asset. The filled quantity and average price came from Alpaca.
+
+> **Safety:** REGRET remains paper-only. `ALPACA_PAPER=true` is enforced, and live-money trading is not supported.
+
 ## Day 03 decision dashboard and replay
 
 The Next.js dashboard turns the decision ledger into an evidence-first review surface. It shows aggregate Decision Value, avoided loss, missed alpha, evaluation counts, the honest execution count, full analyst/critic reasoning, deterministic risk output, and a two-point counterfactual replay built only from recorded entry and evaluation prices. The dashboard is read-only: it contains no order, routing, scouting, analysis, or evaluation controls.
