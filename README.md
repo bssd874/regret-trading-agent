@@ -115,6 +115,53 @@ Day 02 endpoints:
 
 The repository currently makes no claim of a live executed-trade evaluation; that requires a genuine filled paper execution. Outcome evaluation is read-only against Alpaca, and `PAPER_EXECUTION_ENABLED=false` remains the default and required Day 02 operating state.
 
+## REGRET Autonomous Loop
+
+The autonomous loop is a thin scheduler around the existing production pipeline. It evaluates due outcomes, runs Market Scout, processes only candidates returned by that cycle, calls the existing Decision Pipeline, and routes only the persisted RiskDecision. It does not add a strategy, model, risk formula, or trading path.
+
+Two safety-derived modes are available:
+
+- **OBSERVE** — `AUTONOMOUS_AGENT_ENABLED=true` and `PAPER_EXECUTION_ENABLED=false`. Scouting, analysis, criticism, consensus, risk decisions, rejected-trade shadow routing, and due-outcome evaluation run automatically. A genuine `ACCEPT` is preserved unchanged and recorded in its cycle as `EXECUTION_HELD` with reason `PAPER_EXECUTION_DISABLED`; it is not routed, rejected, shadowed, or executed later.
+- **AUTONOMOUS PAPER** — `AUTONOMOUS_AGENT_ENABLED=true` and `PAPER_EXECUTION_ENABLED=true`. Only a genuine `ACCEPT` created by the current cycle may pass to the existing DecisionRouter and Alpaca paper execution. Historical accepts are never scanned or automatically executed.
+
+Autonomy defaults off, and paper execution independently defaults off:
+
+```dotenv
+ALPACA_PAPER=true
+PAPER_EXECUTION_ENABLED=false
+AUTONOMOUS_AGENT_ENABLED=false
+AUTONOMOUS_CYCLE_SECONDS=300
+AUTONOMOUS_MAX_CANDIDATES_PER_CYCLE=2
+AUTONOMOUS_STALE_CYCLE_SECONDS=900
+```
+
+Each scheduled or manual cycle is persisted as an `AgentCycle`, including its mode, heartbeat, terminal status, counts, candidate actions, and safe error metadata. A recent `RUNNING` heartbeat blocks overlap with `AGENT_CYCLE_ALREADY_RUNNING`; a heartbeat older than the configured stale window is marked `ABANDONED` before a new cycle is claimed.
+
+Run the three processes separately from the repository root:
+
+```powershell
+# FastAPI
+uvicorn backend.app.main:app --reload
+
+# Frontend
+cd frontend
+npm run dev
+
+# Recurring autonomous worker (from the repository root)
+python -m backend.scripts.run_autonomous_agent
+```
+
+The terminal remains the read-only observability and audit interface for the autonomous agent. It is not a manual trading dashboard and provides no buy, sell, execute, or close controls.
+
+Autonomous observability endpoints:
+
+- `GET /api/agent/status`
+- `GET /api/agent/cycles`
+- `GET /api/agent/cycles/{cycle_id}`
+- `POST /api/agent/run-once`
+
+Manual run-once is available for a controlled test or demo even when the recurring worker is disabled. It runs one normal cycle and honors all paper-only and execution kill switches.
+
 ## Day 03 decision dashboard and replay
 
 The Next.js dashboard turns the decision ledger into an evidence-first review surface. It shows aggregate Decision Value, avoided loss, missed alpha, evaluation counts, the honest execution count, full analyst/critic reasoning, deterministic risk output, and a two-point counterfactual replay built only from recorded entry and evaluation prices. The dashboard is read-only: it contains no order, routing, scouting, analysis, or evaluation controls.

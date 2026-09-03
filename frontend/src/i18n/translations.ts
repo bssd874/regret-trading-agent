@@ -12,6 +12,11 @@ export type Translation = {
     paperMode: string;
     apiHealthy: string;
     apiDegraded: string;
+    agentOffline: string;
+    agentActive: string;
+    observe: string;
+    paperAutonomous: string;
+    lastCycle: string;
     refresh: string;
     refreshing: string;
   };
@@ -118,6 +123,11 @@ export const translations: Record<Language, Translation> = {
       paperMode: "Paper Mode",
       apiHealthy: "API Healthy",
       apiDegraded: "API Degraded",
+      agentOffline: "Agent offline",
+      agentActive: "Agent active",
+      observe: "Observe",
+      paperAutonomous: "Paper autonomous",
+      lastCycle: "Last cycle",
       refresh: "Refresh",
       refreshing: "Refreshing",
     },
@@ -222,6 +232,11 @@ export const translations: Record<Language, Translation> = {
       paperMode: "Paper Mode",
       apiHealthy: "API Healthy",
       apiDegraded: "API Degraded",
+      agentOffline: "Agent nonaktif",
+      agentActive: "Agent aktif",
+      observe: "Observasi",
+      paperAutonomous: "Paper otonom",
+      lastCycle: "Siklus terakhir",
       refresh: "Perbarui",
       refreshing: "Memperbarui",
     },
@@ -338,4 +353,16 @@ export function decisionStatusLabel(
     return translations[language].stream.noTrade;
   }
   return status;
+}
+
+export function agentStatusLabel(
+  status: { enabled: boolean; paper_execution_enabled: boolean } | null,
+  language: Language,
+): string {
+  const copy = translations[language].header;
+  if (!status?.enabled) return copy.agentOffline.toUpperCase();
+  const mode = status.paper_execution_enabled
+    ? copy.paperAutonomous
+    : copy.observe;
+  return `${copy.agentActive} · ${mode}`.toUpperCase();
 }

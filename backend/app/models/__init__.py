@@ -1,3 +1,4 @@
+from backend.app.models.agent_cycle import AgentCycle
 from backend.app.models.candidate_trade import CandidateTrade
 from backend.app.models.critic_analysis import CriticAnalysis
 from backend.app.models.decision_analysis import DecisionAnalysis
@@ -9,6 +10,7 @@ from backend.app.models.shadow_trade import ShadowTrade
 
 
 __all__ = [
+    "AgentCycle",
     "CandidateTrade",
     "CriticAnalysis",
     "DecisionAnalysis",

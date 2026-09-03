@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CounterfactualGraph } from "@/components/counterfactual-graph";
 import { useLanguage } from "@/i18n/language-provider";
 import {
+  agentStatusLabel,
   decisionStatusLabel,
   type Language,
   type Translation,
@@ -26,6 +27,7 @@ import {
   api,
   loadDashboardData,
   type Candidate,
+  type AgentStatus,
   type Classification,
   type DashboardData,
   type DecisionDetail,
@@ -210,15 +212,18 @@ function LanguageControl() {
 
 function DashboardHeader({
   backendHealthy,
+  agentStatus,
   refreshing,
   onRefresh,
   copy,
 }: {
   backendHealthy: boolean;
+  agentStatus: AgentStatus | null;
   refreshing: boolean;
   onRefresh: () => void;
   copy: Translation;
 }) {
+  const { language } = useLanguage();
   const { activeSection, navigateTo } = useActiveDashboardSection();
   const navigation: Array<{ id: DashboardSection; label: string }> = [
     { id: "overview", label: copy.header.overview },
@@ -251,7 +256,15 @@ function DashboardHeader({
       </nav>
 
       <div className="ml-auto flex h-12 items-center gap-6 border-l border-r border-[#3b4548] px-7 text-[12px] font-medium uppercase tracking-[0.12em] text-slate-300">
-        <span className="whitespace-nowrap before:mr-1.5 before:text-slate-500 before:content-['•']">{copy.header.paperMode}</span>
+        <span className="flex flex-col gap-1 whitespace-nowrap">
+          <span className="before:mr-1.5 before:text-slate-500 before:content-['•']">{copy.header.paperMode}</span>
+          <span
+            className={agentStatus?.enabled ? "text-cyan-300" : "text-slate-600"}
+            data-agent-status={agentStatus?.mode ?? "OFFLINE"}
+          >
+            {agentStatusLabel(agentStatus, language)}
+          </span>
+        </span>
         <span className="flex items-center gap-1.5 whitespace-nowrap">
           <span className={`size-1.5 rounded-full ${backendHealthy ? "bg-emerald-300" : "bg-amber-300"}`} />
           {backendHealthy ? copy.header.apiHealthy : copy.header.apiDegraded}
@@ -710,7 +723,7 @@ export function Dashboard() {
 
   return (
     <main className="mx-auto w-full max-w-[1600px] px-5 pb-5 sm:px-7">
-      <DashboardHeader backendHealthy={data.health?.status === "ok"} copy={copy} onRefresh={() => void load(true)} refreshing={refreshing} />
+      <DashboardHeader agentStatus={data.agentStatus} backendHealthy={data.health?.status === "ok"} copy={copy} onRefresh={() => void load(true)} refreshing={refreshing} />
 
       {partialErrors.length > 0 && (
         <div className="mt-4 flex items-start gap-3 border-l border-[#e9a19a] pl-4 text-xs leading-5 text-[#e9a19a]">

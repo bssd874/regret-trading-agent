@@ -33,6 +33,31 @@ def test_execution_kill_switch_defaults_false():
     assert configured.paper_execution_enabled is False
 
 
+def test_autonomous_defaults_are_safe():
+    configured = Settings(_env_file=None, **_settings_values())
+    assert configured.autonomous_agent_enabled is False
+    assert configured.autonomous_cycle_seconds == 300
+    assert configured.autonomous_max_candidates_per_cycle == 2
+    assert configured.autonomous_stale_cycle_seconds == 900
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"autonomous_cycle_seconds": 0},
+        {"autonomous_max_candidates_per_cycle": 0},
+        {"autonomous_max_candidates_per_cycle": 11},
+        {
+            "autonomous_cycle_seconds": 300,
+            "autonomous_stale_cycle_seconds": 300,
+        },
+    ],
+)
+def test_autonomous_config_rejects_unsafe_bounds(overrides):
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, **_settings_values(**overrides))
+
+
 def test_execution_client_is_hardcoded_to_paper(monkeypatch):
     constructor = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(service_module, "TradingClient", constructor)

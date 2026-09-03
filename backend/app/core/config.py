@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -70,6 +70,27 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # Autonomous orchestration
+    # =========================================================
+    autonomous_agent_enabled: bool = False
+
+    autonomous_cycle_seconds: int = Field(
+        default=300,
+        gt=0,
+    )
+
+    autonomous_max_candidates_per_cycle: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+    )
+
+    autonomous_stale_cycle_seconds: int = Field(
+        default=900,
+        gt=0,
+    )
+
+    # =========================================================
     # Database
     # =========================================================
     database_url: str = "sqlite:///./regret.db"
@@ -109,6 +130,16 @@ class Settings(BaseSettings):
     ) -> str:
         normalized = str(value).strip().lower()
         return normalized
+
+    @model_validator(mode="after")
+    def validate_autonomous_cycle_window(self):
+        if self.autonomous_stale_cycle_seconds <= self.autonomous_cycle_seconds:
+            raise ValueError(
+                "AUTONOMOUS_STALE_CYCLE_SECONDS must be greater than "
+                "AUTONOMOUS_CYCLE_SECONDS"
+            )
+
+        return self
 
 
 settings = Settings()

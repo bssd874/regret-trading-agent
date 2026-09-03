@@ -8,6 +8,19 @@ export type Health = {
   paper_trading: boolean;
 };
 
+export type AgentStatus = {
+  enabled: boolean;
+  mode: "OBSERVE" | "AUTONOMOUS_PAPER";
+  cycle_seconds: number;
+  max_candidates_per_cycle: number;
+  paper: true;
+  paper_execution_enabled: boolean;
+  running: boolean;
+  last_cycle_status: string | null;
+  last_cycle_started_at: string | null;
+  last_cycle_finished_at: string | null;
+};
+
 export type Candidate = {
   id: number;
   symbol: string;
@@ -167,6 +180,7 @@ export type RegretMetrics = {
 
 export type DashboardData = {
   health: Health | null;
+  agentStatus: AgentStatus | null;
   candidates: Candidate[];
   decisions: DecisionListItem[];
   executions: Execution[];
@@ -208,6 +222,8 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
 
 export const api = {
   getHealth: (signal?: AbortSignal) => request<Health>("/health", signal),
+  getAgentStatus: (signal?: AbortSignal) =>
+    request<AgentStatus>("/api/agent/status", signal),
   getCandidates: (signal?: AbortSignal) =>
     request<Candidate[]>("/api/candidates", signal),
   getDecisions: (signal?: AbortSignal) =>
@@ -261,6 +277,7 @@ export async function loadDashboardData(
 
   const [
     health,
+    agentStatus,
     candidates,
     decisions,
     executions,
@@ -270,6 +287,7 @@ export async function loadDashboardData(
     metrics,
   ] = await Promise.all([
     safely("health", api.getHealth(signal), null),
+    safely("agent status", api.getAgentStatus(signal), null),
     safely("candidates", api.getCandidates(signal), []),
     safely("decisions", api.getDecisions(signal), []),
     safely("executions", api.getExecutions(signal), []),
@@ -282,6 +300,7 @@ export async function loadDashboardData(
   return {
     data: {
       health,
+      agentStatus,
       candidates,
       decisions,
       executions,
