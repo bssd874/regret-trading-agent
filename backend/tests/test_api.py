@@ -9,9 +9,12 @@ from backend.app.db.database import get_db
 from backend.app.core.config import settings
 from backend.app.services.alpaca_service import alpaca_service
 from backend.app.services.paper_execution_service import paper_execution_service
+from backend.app.models.trade_exit import TradeExit
 from backend.app.services.critic_agent import CriticAgent
 from backend.tests.test_critic_fallback import FakeProvider, _valid_critic
 from backend.tests.test_decision_pipeline import StubAnalyst, StubCritic, build_pipeline
+from backend.tests.test_decision_router import _create_routing_chain
+from backend.tests.test_outcome_pipeline import NOW, _executed
 
 
 def test_analysis_and_decision_endpoints(
@@ -212,3 +215,47 @@ def test_decision_api_exposes_azure_critic_fallback(
     assert analyzed.json()["critic"]["degraded_mode"] is True
     assert detail.json()["critic"]["provider"] == "azure-fallback"
     assert listing.json()[0]["critic_provider"] == "azure-fallback"
+
+
+def test_trade_exit_read_only_endpoints(db_session, candidate_factory):
+    candidate = candidate_factory(symbol="EXITAPI")
+    risk, analysis = _create_routing_chain(
+        db_session,
+        candidate,
+        decision="ACCEPT",
+    )
+    execution = _executed(db_session, candidate, risk)
+    trade_exit = TradeExit(
+        executed_trade_id=execution.id,
+        candidate_id=candidate.id,
+        risk_decision_id=risk.id,
+        symbol=candidate.symbol,
+        reason="TAKE_PROFIT",
+        trigger_price=105.0,
+        target_price=analysis.target_price,
+        stop_loss=analysis.stop_loss,
+        horizon_minutes=analysis.horizon_minutes,
+        requested_qty=10.0,
+        alpaca_order_id="paper-exit-api",
+        status="filled",
+        filled_qty=10.0,
+        filled_avg_price=105.0,
+        triggered_at=NOW,
+        submitted_at=NOW,
+        closed_at=NOW,
+    )
+    db_session.add(trade_exit)
+    db_session.commit()
+    db_session.refresh(trade_exit)
+
+    with _test_client(db_session) as client:
+        listing = client.get("/api/exits")
+        detail = client.get(f"/api/exits/{trade_exit.id}")
+        missing = client.get("/api/exits/999")
+
+    assert listing.status_code == 200
+    assert listing.json()[0]["reason"] == "TAKE_PROFIT"
+    assert detail.status_code == 200
+    assert detail.json()["executed_trade_id"] == execution.id
+    assert detail.json()["paper"] is True
+    assert missing.status_code == 404

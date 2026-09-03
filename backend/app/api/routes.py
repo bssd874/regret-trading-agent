@@ -23,6 +23,7 @@ from backend.app.models.executed_trade import ExecutedTrade
 from backend.app.models.outcome_snapshot import OutcomeSnapshot
 from backend.app.models.regret_event import RegretEvent
 from backend.app.models.shadow_trade import ShadowTrade
+from backend.app.models.trade_exit import TradeExit
 from backend.app.services.decision_router import decision_router
 from backend.app.services.execution_sync_service import (
     execution_sync_service,
@@ -87,6 +88,32 @@ def _regret_event_payload(event: RegretEvent) -> dict:
         "pnl_amount": event.pnl_amount,
         "decision_value": event.decision_value,
         "created_at": event.created_at,
+    }
+
+
+def _trade_exit_payload(trade_exit: TradeExit) -> dict:
+    return {
+        "id": trade_exit.id,
+        "executed_trade_id": trade_exit.executed_trade_id,
+        "candidate_id": trade_exit.candidate_id,
+        "risk_decision_id": trade_exit.risk_decision_id,
+        "symbol": trade_exit.symbol,
+        "reason": trade_exit.reason,
+        "trigger_price": trade_exit.trigger_price,
+        "target_price": trade_exit.target_price,
+        "stop_loss": trade_exit.stop_loss,
+        "horizon_minutes": trade_exit.horizon_minutes,
+        "requested_qty": trade_exit.requested_qty,
+        "alpaca_order_id": trade_exit.alpaca_order_id,
+        "status": trade_exit.status,
+        "filled_qty": trade_exit.filled_qty,
+        "filled_avg_price": trade_exit.filled_avg_price,
+        "triggered_at": trade_exit.triggered_at,
+        "submitted_at": trade_exit.submitted_at,
+        "closed_at": trade_exit.closed_at,
+        "created_at": trade_exit.created_at,
+        "updated_at": trade_exit.updated_at,
+        "paper": True,
     }
 
 
@@ -356,6 +383,26 @@ def get_execution(
         )
 
     return _execution_payload(execution)
+
+
+@router.get("/exits")
+def get_trade_exits(db: Session = Depends(get_db)):
+    rows = list(
+        db.scalars(
+            select(TradeExit)
+            .order_by(desc(TradeExit.created_at))
+            .limit(100)
+        ).all()
+    )
+    return [_trade_exit_payload(row) for row in rows]
+
+
+@router.get("/exits/{exit_id}")
+def get_trade_exit(exit_id: int, db: Session = Depends(get_db)):
+    trade_exit = db.get(TradeExit, exit_id)
+    if trade_exit is None:
+        raise HTTPException(status_code=404, detail="TradeExit not found")
+    return _trade_exit_payload(trade_exit)
 
 
 @router.post("/executions/{execution_id}/sync")

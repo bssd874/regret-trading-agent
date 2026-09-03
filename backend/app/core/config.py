@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     # =========================================================
     autonomous_agent_enabled: bool = False
 
+    # Existing paper positions may still be reconciled and exited while
+    # discovery of new autonomous entries remains independently disabled.
+    autonomous_new_entries_enabled: bool = False
+
     autonomous_cycle_seconds: int = Field(
         default=300,
         gt=0,

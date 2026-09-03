@@ -8,6 +8,7 @@ from backend.app.models.executed_trade import ExecutedTrade
 from backend.app.models.outcome_snapshot import OutcomeSnapshot
 from backend.app.models.regret_event import RegretEvent
 from backend.app.models.shadow_trade import ShadowTrade
+from backend.app.models.trade_exit import TradeExit
 from backend.app.services.alpaca_service import EvaluationPrice
 from backend.app.services.outcome_pipeline import OutcomePipeline
 from backend.tests.test_decision_router import _create_routing_chain
@@ -82,6 +83,41 @@ def _executed(
     db_session.commit()
     db_session.refresh(execution)
     return execution
+
+
+def _filled_exit(
+    db_session,
+    execution,
+    *,
+    filled_qty=10.0,
+    filled_avg_price=110.0,
+    status="filled",
+):
+    trade_exit = TradeExit(
+        executed_trade_id=execution.id,
+        candidate_id=execution.candidate_id,
+        risk_decision_id=execution.risk_decision_id,
+        symbol=execution.symbol,
+        reason="TAKE_PROFIT",
+        trigger_price=filled_avg_price,
+        target_price=104.0,
+        stop_loss=98.0,
+        horizon_minutes=60,
+        requested_qty=filled_qty,
+        alpaca_order_id=f"paper-exit-{execution.id}",
+        status=status,
+        filled_qty=filled_qty if status.lower() == "filled" else None,
+        filled_avg_price=(
+            filled_avg_price if status.lower() == "filled" else None
+        ),
+        triggered_at=NOW - timedelta(minutes=2),
+        submitted_at=NOW - timedelta(minutes=1),
+        closed_at=NOW,
+    )
+    db_session.add(trade_exit)
+    db_session.commit()
+    db_session.refresh(trade_exit)
+    return trade_exit
 
 
 def test_not_due_shadow_cannot_evaluate(db_session, candidate_factory):
@@ -192,6 +228,27 @@ def test_unfilled_execution_is_not_evaluated(db_session, candidate_factory):
     assert market.calls == []
 
 
+def test_filled_execution_without_filled_exit_is_still_open(
+    db_session,
+    candidate_factory,
+):
+    candidate = candidate_factory()
+    risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
+    execution = _executed(db_session, candidate, risk)
+    market = FakeMarketData()
+
+    result = OutcomePipeline(market_data=market).evaluate_execution(
+        db=db_session,
+        execution_id=execution.id,
+        now=NOW,
+    )
+
+    assert result["status"] == "NOT_READY"
+    assert result["reason"] == "POSITION_STILL_OPEN"
+    assert market.calls == []
+    assert _count(db_session, OutcomeSnapshot) == 0
+
+
 @pytest.mark.parametrize(
     "evaluation_price,classification,expected_pnl",
     [
@@ -209,16 +266,62 @@ def test_filled_execution_can_evaluate(
     candidate = candidate_factory()
     risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
     execution = _executed(db_session, candidate, risk)
+    _filled_exit(
+        db_session,
+        execution,
+        filled_qty=10.0,
+        filled_avg_price=evaluation_price,
+    )
+    market = FakeMarketData()
 
-    result = OutcomePipeline(
-        market_data=FakeMarketData({candidate.symbol: evaluation_price})
-    ).evaluate_execution(db=db_session, execution_id=execution.id, now=NOW)
+    result = OutcomePipeline(market_data=market).evaluate_execution(
+        db=db_session,
+        execution_id=execution.id,
+        now=NOW,
+    )
 
     outcome = db_session.get(OutcomeSnapshot, result["outcome_id"])
+    event = db_session.get(RegretEvent, result["regret_event_id"])
     assert result["classification"] == classification
     assert outcome.quantity == pytest.approx(10.0)
     assert outcome.notional == pytest.approx(1000.0)
     assert outcome.pnl_amount == pytest.approx(expected_pnl)
+    assert outcome.price_source == "alpaca_exit_fill"
+    assert event.decision_value == pytest.approx(expected_pnl)
+    assert market.calls == []
+
+
+def test_realized_execution_uses_actual_closed_quantity(
+    db_session,
+    candidate_factory,
+):
+    candidate = candidate_factory()
+    risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
+    execution = _executed(
+        db_session,
+        candidate,
+        risk,
+        filled_qty=10.0,
+        filled_avg_price=100.0,
+    )
+    _filled_exit(
+        db_session,
+        execution,
+        filled_qty=4.0,
+        filled_avg_price=105.0,
+    )
+
+    result = OutcomePipeline(market_data=FakeMarketData()).evaluate_execution(
+        db=db_session,
+        execution_id=execution.id,
+        now=NOW,
+    )
+    outcome = db_session.get(OutcomeSnapshot, result["outcome_id"])
+
+    assert outcome.quantity == 4.0
+    assert outcome.notional == 400.0
+    assert outcome.pnl_amount == 20.0
+    assert outcome.pnl_pct == pytest.approx(0.05)
 
 
 def test_evaluation_price_failure_leaves_shadow_open(

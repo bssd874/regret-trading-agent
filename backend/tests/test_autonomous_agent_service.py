@@ -46,6 +46,7 @@ def _settings(**overrides) -> Settings:
         "azure_openai_deployment": "test-deployment",
         "nvidia_api_key": "test-key",
         "autonomous_agent_enabled": True,
+        "autonomous_new_entries_enabled": True,
         "autonomous_cycle_seconds": 300,
         "autonomous_max_candidates_per_cycle": 2,
         "autonomous_stale_cycle_seconds": 900,
@@ -109,6 +110,19 @@ class ErrorOutcomes:
         }
 
 
+class HoldExitManager:
+    def __init__(self):
+        self.calls = []
+
+    def monitor_execution(self, *, db, execution_id):
+        self.calls.append(execution_id)
+        return {
+            "action": "HOLD",
+            "execution_id": execution_id,
+            "reason": "TEST_HOLD",
+        }
+
+
 class DispatchPipeline:
     def __init__(self, by_symbol):
         self.by_symbol = by_symbol
@@ -134,6 +148,8 @@ def _agent(
     router=None,
     outcomes=None,
     execution_sync=None,
+    exit_manager=None,
+    exit_sync=None,
     config=None,
     now_provider=None,
 ):
@@ -143,6 +159,8 @@ def _agent(
         router=router or MagicMock(),
         outcomes=outcomes or EmptyOutcomes(),
         **({"execution_sync": execution_sync} if execution_sync else {}),
+        exit_manager=exit_manager or HoldExitManager(),
+        **({"exit_sync": exit_sync} if exit_sync else {}),
         config=config or _settings(),
         now_provider=now_provider,
     )
@@ -476,7 +494,7 @@ class FixedNowOutcomes:
         return self.pipeline.evaluate_due(db=db, now=NOW)
 
 
-def test_reconciled_fill_is_eligible_for_existing_outcome_engine(
+def test_reconciled_fill_without_exit_remains_open_for_outcome_engine(
     db_session,
     candidate_factory,
 ):
@@ -496,9 +514,7 @@ def test_reconciled_fill_is_eligible_for_existing_outcome_engine(
         filled_qty="10",
         filled_avg_price="100",
     )
-    outcomes = FixedNowOutcomes(
-        OutcomePipeline(market_data=FakeMarketData({candidate.symbol: 110.0}))
-    )
+    outcomes = FixedNowOutcomes(OutcomePipeline(market_data=FakeMarketData()))
 
     cycle = _agent(
         symbols=(),
@@ -509,10 +525,10 @@ def test_reconciled_fill_is_eligible_for_existing_outcome_engine(
     db_session.refresh(execution)
     assert cycle.status == "COMPLETED"
     assert execution.status == "filled"
-    assert cycle.outcomes_evaluated_count == 1
-    assert cycle.regret_events_created_count == 1
-    assert _count(db_session, OutcomeSnapshot) == 1
-    assert _count(db_session, RegretEvent) == 1
+    assert cycle.outcomes_evaluated_count == 0
+    assert cycle.regret_events_created_count == 0
+    assert _count(db_session, OutcomeSnapshot) == 0
+    assert _count(db_session, RegretEvent) == 0
 
 
 def test_one_candidate_failure_does_not_stop_following_candidate(db_session):

@@ -7,6 +7,7 @@ from backend.app.models.outcome_snapshot import OutcomeSnapshot
 from backend.app.models.regret_event import RegretEvent
 from backend.app.models.risk_decision import RiskDecision
 from backend.app.models.shadow_trade import ShadowTrade
+from backend.app.models.trade_exit import TradeExit
 
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "RegretEvent",
     "RiskDecision",
     "ShadowTrade",
+    "TradeExit",
 ]

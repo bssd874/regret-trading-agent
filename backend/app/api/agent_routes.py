@@ -46,6 +46,11 @@ def agent_cycle_payload(cycle: AgentCycle) -> dict:
         "regret_events_created_count": cycle.regret_events_created_count,
         "executions_synced": int(summary.get("executions_synced", 0)),
         "executions_filled": int(summary.get("executions_filled", 0)),
+        "open_positions_checked": int(summary.get("open_positions_checked", 0)),
+        "exit_holds": int(summary.get("exit_holds", 0)),
+        "exits_triggered": int(summary.get("exits_triggered", 0)),
+        "exits_synced": int(summary.get("exits_synced", 0)),
+        "exits_filled": int(summary.get("exits_filled", 0)),
         "summary": summary,
         "errors": _load_json(cycle.errors_json, []),
         "created_at": cycle.created_at,
@@ -77,6 +82,11 @@ def get_agent_status(db: Session = Depends(get_db)):
             "regret_events_created": last_cycle.regret_events_created_count,
             "executions_synced": payload["executions_synced"],
             "executions_filled": payload["executions_filled"],
+            "open_positions_checked": payload["open_positions_checked"],
+            "exit_holds": payload["exit_holds"],
+            "exits_triggered": payload["exits_triggered"],
+            "exits_synced": payload["exits_synced"],
+            "exits_filled": payload["exits_filled"],
         }
         if last_cycle is not None
         else None
@@ -91,6 +101,7 @@ def get_agent_status(db: Session = Depends(get_db)):
         ),
         "paper": True,
         "paper_execution_enabled": settings.paper_execution_enabled,
+        "new_entries_enabled": settings.autonomous_new_entries_enabled,
         "running": running is not None,
         "last_cycle": payload,
         "last_cycle_status": last_cycle.status if last_cycle else None,
@@ -98,6 +109,13 @@ def get_agent_status(db: Session = Depends(get_db)):
         "last_cycle_finished_at": last_cycle.finished_at if last_cycle else None,
         "executions_synced": payload["executions_synced"] if payload else 0,
         "executions_filled": payload["executions_filled"] if payload else 0,
+        "open_positions_checked": (
+            payload["open_positions_checked"] if payload else 0
+        ),
+        "exit_holds": payload["exit_holds"] if payload else 0,
+        "exits_triggered": payload["exits_triggered"] if payload else 0,
+        "exits_synced": payload["exits_synced"] if payload else 0,
+        "exits_filled": payload["exits_filled"] if payload else 0,
         "last_cycle_counts": counts,
     }
 

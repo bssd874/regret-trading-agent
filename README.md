@@ -126,14 +126,16 @@ The repository currently makes no claim of a live executed-trade evaluation; tha
 
 ## REGRET Autonomous Loop
 
-The autonomous loop is a thin scheduler around the existing production pipeline. At the start of each cycle it read-only reconciles non-terminal paper executions through the existing `ExecutionSyncService`, then evaluates due outcomes, runs Market Scout, processes only candidates returned by that cycle, calls the existing Decision Pipeline, and routes only the persisted RiskDecision. It does not add a strategy, model, risk formula, or trading path.
+The autonomous loop is a thin scheduler around the existing production pipeline. Each cycle read-only reconciles non-terminal BUY and SELL orders, monitors filled paper positions against their original persisted thesis, evaluates realized execution and due shadow outcomes, and—only when the separate new-entry gate is enabled—runs Market Scout and the existing Decision Pipeline. It does not add a strategy, model, or risk formula.
 
 Two safety-derived modes are available:
 
 - **OBSERVE** — `AUTONOMOUS_AGENT_ENABLED=true` and `PAPER_EXECUTION_ENABLED=false`. Scouting, analysis, criticism, consensus, risk decisions, rejected-trade shadow routing, and due-outcome evaluation run automatically. A genuine `ACCEPT` is preserved unchanged and recorded in its cycle as `EXECUTION_HELD` with reason `PAPER_EXECUTION_DISABLED`; it is not routed, rejected, shadowed, or executed later.
 - **AUTONOMOUS PAPER** — `AUTONOMOUS_AGENT_ENABLED=true` and `PAPER_EXECUTION_ENABLED=true`. Only a genuine `ACCEPT` created by the current cycle may pass to the existing DecisionRouter and Alpaca paper execution. Historical accepts are never scanned or automatically executed.
 
-A newly submitted current-cycle paper order receives one immediate read-only status synchronization attempt. If it remains `new`, `accepted`, pending, or partially filled, later cycles synchronize it again. Known terminal states (`filled`, `canceled`, `expired`, and `rejected`) are not polled again. Genuine fill quantity and average price are persisted by the existing sync service, allowing the unchanged Outcome Engine to evaluate a filled execution when its horizon is due. One lookup failure is isolated to that execution and does not stop the cycle.
+`AUTONOMOUS_NEW_ENTRIES_ENABLED=false` independently disables Scout, analysis, and new entry creation while retaining reconciliation, position monitoring, approved exits, and outcome evaluation for existing paper positions. Set it to `true` only when new autonomous entries are intentionally enabled.
+
+A newly submitted current-cycle BUY receives one immediate read-only status synchronization attempt. If it remains `new`, `accepted`, pending, or partially filled, later cycles synchronize it again. Known terminal states (`filled`, `canceled`, `expired`, and `rejected`) are not polled again. Genuine fill quantity and average price are persisted from Alpaca. One lookup failure is isolated to that execution and does not stop the cycle.
 
 Autonomy defaults off, and paper execution independently defaults off:
 
@@ -141,12 +143,13 @@ Autonomy defaults off, and paper execution independently defaults off:
 ALPACA_PAPER=true
 PAPER_EXECUTION_ENABLED=false
 AUTONOMOUS_AGENT_ENABLED=false
+AUTONOMOUS_NEW_ENTRIES_ENABLED=false
 AUTONOMOUS_CYCLE_SECONDS=300
 AUTONOMOUS_MAX_CANDIDATES_PER_CYCLE=2
 AUTONOMOUS_STALE_CYCLE_SECONDS=900
 ```
 
-Each scheduled or manual cycle is persisted as an `AgentCycle`, including its mode, heartbeat, terminal status, counts, candidate actions, and safe error metadata. Backward-compatible reconciliation counts (`executions_synced` and `executions_filled`) are stored in its `summary_json` and exposed by the agent status and cycle APIs. A recent `RUNNING` heartbeat blocks overlap with `AGENT_CYCLE_ALREADY_RUNNING`; a heartbeat older than the configured stale window is marked `ABANDONED` before a new cycle is claimed.
+Each scheduled or manual cycle is persisted as an `AgentCycle`, including its mode, heartbeat, terminal status, counts, candidate actions, and safe error metadata. Backward-compatible BUY reconciliation and exit-lifecycle counts are stored in `summary_json` and exposed by the agent status and cycle APIs. A recent `RUNNING` heartbeat blocks overlap with `AGENT_CYCLE_ALREADY_RUNNING`; a heartbeat older than the configured stale window is marked `ABANDONED` before a new cycle is claimed.
 
 Run the three processes separately from the repository root:
 
@@ -170,6 +173,8 @@ Autonomous observability endpoints:
 - `GET /api/agent/cycles`
 - `GET /api/agent/cycles/{cycle_id}`
 - `POST /api/agent/run-once`
+- `GET /api/exits`
+- `GET /api/exits/{exit_id}`
 
 Manual run-once is available for a controlled test or demo even when the recurring worker is disabled. It runs one normal cycle and honors all paper-only and execution kill switches.
 
@@ -207,6 +212,26 @@ Market Scout
 This verifies that REGRET can autonomously discover an opportunity, analyze it, pass deterministic risk controls, submit an Alpaca Paper order, and reconcile the execution to a confirmed fill without a human selecting or buying the asset. The filled quantity and average price came from Alpaca.
 
 > **Safety:** REGRET remains paper-only. `ALPACA_PAPER=true` is enforced, and live-money trading is not supported.
+
+### Autonomous Paper Exit Lifecycle
+
+The backend now implements and tests the deterministic lifecycle after a filled BUY:
+
+```text
+FILLED BUY
+→ Position Monitoring
+→ TAKE_PROFIT / STOP_LOSS / TIME_EXIT
+→ Alpaca Paper SELL
+→ Automatic Reconciliation
+→ FILLED
+→ Realized Execution P&L
+→ CORRECT_EXECUTION / BAD_EXECUTION
+→ Decision Value
+```
+
+Position monitoring uses only the original persisted `target_price`, `stop_loss`, and `horizon_minutes`; no LLM changes exit levels. A `TradeExit` is reserved before Alpaca is contacted, ambiguous submission failures are not retried automatically, and pending SELL orders are reconciled read-only in later cycles. An executed ACCEPT outcome remains `NOT_READY` with `POSITION_STILL_OPEN` until both BUY and SELL have genuine fills. Realized P&L then uses Alpaca's actual entry fill, exit fill, and closed quantity with `price_source=alpaca_exit_fill`.
+
+The autonomous SELL lifecycle is implemented and covered by mocked integration tests, but it has **not** yet been verified by selling the existing real TSLA paper position. No real SELL should be run without explicit user approval.
 
 ## Day 03 decision dashboard and replay
 

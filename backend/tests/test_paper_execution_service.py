@@ -36,6 +36,7 @@ def test_execution_kill_switch_defaults_false():
 def test_autonomous_defaults_are_safe():
     configured = Settings(_env_file=None, **_settings_values())
     assert configured.autonomous_agent_enabled is False
+    assert configured.autonomous_new_entries_enabled is False
     assert configured.autonomous_cycle_seconds == 300
     assert configured.autonomous_max_candidates_per_cycle == 2
     assert configured.autonomous_stale_cycle_seconds == 900
@@ -112,5 +113,36 @@ def test_ineligible_asset_never_submits(monkeypatch, asset):
 
     with pytest.raises(ValueError):
         service.submit_long_market_order(symbol="TEST", notional=100.0)
+
+    service.client.submit_order.assert_not_called()
+
+
+def test_sell_long_position_uses_explicit_paper_market_order(monkeypatch):
+    monkeypatch.setattr(settings, "paper_execution_enabled", True)
+    service = PaperExecutionService()
+    service.client = MagicMock()
+    service.client.get_asset.return_value = SimpleNamespace(
+        tradable=True,
+        fractionable=True,
+    )
+    service.client.submit_order.return_value = SimpleNamespace(id="paper-sell-1")
+
+    service.sell_long_market_position(symbol="tsla", quantity=0.26104187)
+
+    service.client.get_asset.assert_called_once_with("TSLA")
+    request = service.client.submit_order.call_args.kwargs["order_data"]
+    assert request.symbol == "TSLA"
+    assert request.qty == 0.26104187
+    assert request.side == OrderSide.SELL
+
+
+@pytest.mark.parametrize("quantity", [0, -1, float("nan"), float("inf")])
+def test_sell_long_position_rejects_invalid_quantity(monkeypatch, quantity):
+    monkeypatch.setattr(settings, "paper_execution_enabled", True)
+    service = PaperExecutionService()
+    service.client = MagicMock()
+
+    with pytest.raises(ValueError, match="quantity"):
+        service.sell_long_market_position(symbol="TSLA", quantity=quantity)
 
     service.client.submit_order.assert_not_called()

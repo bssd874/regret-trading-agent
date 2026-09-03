@@ -14,15 +14,21 @@ from backend.app.models.executed_trade import ExecutedTrade
 from backend.app.models.outcome_snapshot import OutcomeSnapshot
 from backend.app.models.regret_event import RegretEvent
 from backend.app.models.risk_decision import RiskDecision
+from backend.app.models.trade_exit import TradeExit
 from backend.app.services.decision_pipeline import decision_pipeline
 from backend.app.services.decision_router import decision_router
 from backend.app.services.execution_sync_service import execution_sync_service
 from backend.app.services.market_scout import market_scout
 from backend.app.services.outcome_pipeline import outcome_pipeline
+from backend.app.services.position_exit_service import position_exit_service
+from backend.app.services.trade_exit_sync_service import trade_exit_sync_service
 
 
 AGENT_CYCLE_ALREADY_RUNNING = "AGENT_CYCLE_ALREADY_RUNNING"
 TERMINAL_EXECUTION_STATUSES = frozenset(
+    {"filled", "canceled", "expired", "rejected"}
+)
+TERMINAL_EXIT_STATUSES = frozenset(
     {"filled", "canceled", "expired", "rejected"}
 )
 COUNT_FIELDS = (
@@ -64,6 +70,16 @@ class ExecutionSynchronizer(Protocol):
         ...
 
 
+class PositionExitManager(Protocol):
+    def monitor_execution(self, *, db: Session, execution_id: int) -> dict:
+        ...
+
+
+class TradeExitSynchronizer(Protocol):
+    def sync(self, *, db: Session, exit_id: int) -> TradeExit:
+        ...
+
+
 class AgentCycleAlreadyRunning(RuntimeError):
     def __init__(self) -> None:
         super().__init__(AGENT_CYCLE_ALREADY_RUNNING)
@@ -101,6 +117,8 @@ class AutonomousAgent:
         router: RouterService = decision_router,
         outcomes: OutcomesService = outcome_pipeline,
         execution_sync: ExecutionSynchronizer = execution_sync_service,
+        exit_manager: PositionExitManager = position_exit_service,
+        exit_sync: TradeExitSynchronizer = trade_exit_sync_service,
         config: Settings = settings,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
@@ -109,6 +127,8 @@ class AutonomousAgent:
         self.router = router
         self.outcomes = outcomes
         self.execution_sync = execution_sync
+        self.exit_manager = exit_manager
+        self.exit_sync = exit_sync
         self.config = config
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
@@ -357,6 +377,161 @@ class AutonomousAgent:
             )
         summary["execution_reconciliation"] = reconciliation
 
+    def _sync_trade_exit(
+        self,
+        *,
+        db: Session,
+        exit_id: int,
+        phase: str,
+        summary: dict,
+        errors: list[dict],
+    ) -> dict:
+        previous_status = ""
+        try:
+            trade_exit = db.get(TradeExit, exit_id)
+            previous_status = self._execution_status(
+                trade_exit.status if trade_exit is not None else None
+            )
+            synchronized = self.exit_sync.sync(db=db, exit_id=exit_id)
+            current_status = self._execution_status(synchronized.status)
+            became_filled = (
+                current_status == "filled" and previous_status != "filled"
+            )
+        except Exception as exc:
+            db.rollback()
+            errors.append(
+                {
+                    "phase": phase,
+                    "exit_id": exit_id,
+                    "code": "EXIT_SYNC_FAILED",
+                    "error": _safe_error(exc),
+                }
+            )
+            return {
+                "exit_id": exit_id,
+                "previous_status": previous_status,
+                "status": "SYNC_FAILED",
+            }
+
+        summary["exits_synced"] += 1
+        if became_filled:
+            summary["exits_filled"] += 1
+        return {
+            "exit_id": synchronized.id,
+            "execution_id": synchronized.executed_trade_id,
+            "previous_status": previous_status,
+            "status": current_status,
+            "became_filled": became_filled,
+            "filled_qty": synchronized.filled_qty,
+            "filled_avg_price": synchronized.filled_avg_price,
+        }
+
+    def _reconcile_trade_exits(
+        self,
+        *,
+        db: Session,
+        summary: dict,
+        errors: list[dict],
+    ) -> None:
+        exit_ids = list(
+            db.scalars(
+                select(TradeExit.id)
+                .where(
+                    TradeExit.alpaca_order_id.is_not(None),
+                    TradeExit.alpaca_order_id != "",
+                    func.lower(TradeExit.status).not_in(TERMINAL_EXIT_STATUSES),
+                )
+                .order_by(TradeExit.created_at, TradeExit.id)
+            ).all()
+        )
+        reconciliation = {
+            "eligible_count": len(exit_ids),
+            "items": [],
+        }
+        for exit_id in exit_ids:
+            reconciliation["items"].append(
+                self._sync_trade_exit(
+                    db=db,
+                    exit_id=int(exit_id),
+                    phase="EXIT_RECONCILIATION",
+                    summary=summary,
+                    errors=errors,
+                )
+            )
+        summary["exit_reconciliation"] = reconciliation
+
+    def _monitor_open_positions(
+        self,
+        *,
+        db: Session,
+        summary: dict,
+        errors: list[dict],
+    ) -> None:
+        filled_exit_exists = (
+            select(TradeExit.id)
+            .where(
+                TradeExit.executed_trade_id == ExecutedTrade.id,
+                func.lower(TradeExit.status) == "filled",
+            )
+            .exists()
+        )
+        execution_ids = list(
+            db.scalars(
+                select(ExecutedTrade.id)
+                .where(
+                    func.lower(ExecutedTrade.status) == "filled",
+                    ExecutedTrade.filled_qty > 0,
+                    ExecutedTrade.filled_avg_price > 0,
+                    ~filled_exit_exists,
+                )
+                .order_by(ExecutedTrade.created_at, ExecutedTrade.id)
+            ).all()
+        )
+        monitoring = {"eligible_count": len(execution_ids), "items": []}
+
+        for execution_id in execution_ids:
+            summary["open_positions_checked"] += 1
+            try:
+                result = self.exit_manager.monitor_execution(
+                    db=db,
+                    execution_id=int(execution_id),
+                )
+            except Exception as exc:
+                db.rollback()
+                errors.append(
+                    {
+                        "phase": "POSITION_MONITORING",
+                        "execution_id": int(execution_id),
+                        "code": "POSITION_EXIT_FAILED",
+                        "error": _safe_error(exc),
+                    }
+                )
+                monitoring["items"].append(
+                    {
+                        "execution_id": int(execution_id),
+                        "action": "ERROR",
+                    }
+                )
+                continue
+
+            action = str(result.get("action", "")).strip().upper()
+            if action in {"HOLD", "EXIT_HELD"}:
+                summary["exit_holds"] += 1
+            elif action == "EXIT_TRIGGERED":
+                summary["exits_triggered"] += 1
+                exit_id = result.get("exit_id")
+                if result.get("order_submitted") and exit_id is not None:
+                    result["immediate_sync"] = self._sync_trade_exit(
+                        db=db,
+                        exit_id=int(exit_id),
+                        phase="IMMEDIATE_EXIT_SYNC",
+                        summary=summary,
+                        errors=errors,
+                    )
+            monitoring["items"].append(result)
+
+        summary["position_monitoring"] = monitoring
+
     def _current_risk(
         self,
         *,
@@ -408,6 +583,9 @@ class AutonomousAgent:
         trigger: str = "SCHEDULED",
     ) -> AgentCycle:
         execution_enabled = bool(self.config.paper_execution_enabled)
+        new_entries_enabled = bool(
+            self.config.autonomous_new_entries_enabled
+        )
         mode = self.mode(execution_enabled=execution_enabled)
         cycle = self._claim_cycle(db=db, trigger=trigger, mode=mode)
         cycle_id = cycle.id
@@ -417,8 +595,14 @@ class AutonomousAgent:
             "phase": "CLAIMED",
             "mode": mode,
             "execution_enabled_at_start": execution_enabled,
+            "new_entries_enabled_at_start": new_entries_enabled,
             "executions_synced": 0,
             "executions_filled": 0,
+            "open_positions_checked": 0,
+            "exit_holds": 0,
+            "exits_triggered": 0,
+            "exits_synced": 0,
+            "exits_filled": 0,
             "candidate_ids": [],
             "candidates": [],
         }
@@ -436,6 +620,32 @@ class AutonomousAgent:
                 errors=errors,
             )
             self._reconcile_executions(
+                db=db,
+                summary=summary,
+                errors=errors,
+            )
+            self._checkpoint(
+                db=db,
+                cycle_id=cycle_id,
+                phase="EXIT_RECONCILIATION",
+                counts=counts,
+                summary=summary,
+                errors=errors,
+            )
+            self._reconcile_trade_exits(
+                db=db,
+                summary=summary,
+                errors=errors,
+            )
+            self._checkpoint(
+                db=db,
+                cycle_id=cycle_id,
+                phase="POSITION_MONITORING",
+                counts=counts,
+                summary=summary,
+                errors=errors,
+            )
+            self._monitor_open_positions(
                 db=db,
                 summary=summary,
                 errors=errors,
@@ -464,24 +674,27 @@ class AutonomousAgent:
                 summary=summary,
                 errors=errors,
             )
-            try:
-                scouted = list(
-                    self.scout.run(
-                        db=db,
-                        limit=self.config.autonomous_max_candidates_per_cycle,
+            if new_entries_enabled:
+                try:
+                    scouted = list(
+                        self.scout.run(
+                            db=db,
+                            limit=self.config.autonomous_max_candidates_per_cycle,
+                        )
                     )
-                )
-            except Exception as exc:
-                db.rollback()
-                errors.append(
-                    {
-                        "phase": "SCOUT",
-                        "code": "SCOUT_FAILED",
-                        "error": _safe_error(exc),
-                    }
-                )
+                except Exception as exc:
+                    db.rollback()
+                    errors.append(
+                        {
+                            "phase": "SCOUT",
+                            "code": "SCOUT_FAILED",
+                            "error": _safe_error(exc),
+                        }
+                    )
+                    scouted = []
+                    fatal_failure = True
+            else:
                 scouted = []
-                fatal_failure = True
 
             selected = scouted[: self.config.autonomous_max_candidates_per_cycle]
             candidate_ids = [int(candidate.id) for candidate in selected]
@@ -489,6 +702,12 @@ class AutonomousAgent:
             counts["scouted_count"] = len(scouted)
             summary["candidate_ids"] = candidate_ids
             summary["scout"] = {
+                "status": "ENABLED" if new_entries_enabled else "SKIPPED",
+                "reason": (
+                    None
+                    if new_entries_enabled
+                    else "AUTONOMOUS_NEW_ENTRIES_DISABLED"
+                ),
                 "returned_count": len(scouted),
                 "selected_count": selected_count,
                 "limit": self.config.autonomous_max_candidates_per_cycle,

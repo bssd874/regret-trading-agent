@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from math import isfinite
 from typing import Protocol
 
@@ -12,6 +12,7 @@ from backend.app.models.outcome_snapshot import OutcomeSnapshot
 from backend.app.models.regret_event import RegretEvent
 from backend.app.models.risk_decision import RiskDecision
 from backend.app.models.shadow_trade import ShadowTrade
+from backend.app.models.trade_exit import TradeExit
 from backend.app.services.alpaca_service import EvaluationPrice, alpaca_service
 from backend.app.services.outcome_engine import OutcomeEngine, outcome_engine
 from backend.app.services.regret_engine import RegretEngine, regret_engine
@@ -274,6 +275,24 @@ class OutcomePipeline:
                 "reason": "Execution does not have a genuine completed fill",
             }
 
+        trade_exit = db.scalar(
+            select(TradeExit).where(
+                TradeExit.executed_trade_id == execution.id
+            )
+        )
+        if (
+            trade_exit is None
+            or str(trade_exit.status).strip().lower() != "filled"
+            or not _positive_finite(trade_exit.filled_avg_price)
+            or not _positive_finite(trade_exit.filled_qty)
+        ):
+            return {
+                "status": "NOT_READY",
+                "source_type": "EXECUTED",
+                "source_id": execution.id,
+                "reason": "POSITION_STILL_OPEN",
+            }
+
         risk = db.get(RiskDecision, execution.risk_decision_id)
         if risk is None or risk.decision != "ACCEPT":
             raise RuntimeError("ExecutedTrade has no valid ACCEPT RiskDecision")
@@ -281,20 +300,15 @@ class OutcomePipeline:
         if analysis is None or analysis.candidate_id != execution.candidate_id:
             raise RuntimeError("ExecutedTrade has no valid DecisionAnalysis")
 
-        base_time = execution.submitted_at or execution.created_at
-        due_at = _utc(base_time) + timedelta(minutes=analysis.horizon_minutes)
         evaluated_at = _utc(now or datetime.now(timezone.utc))
-        if evaluated_at < due_at:
-            return {
-                "status": "NOT_READY",
-                "source_type": "EXECUTED",
-                "source_id": execution.id,
-                "reason": "ExecutedTrade evaluation is not due",
-            }
-
         entry_price = float(execution.filled_avg_price)
-        quantity = float(execution.filled_qty)
-        price = self.market_data.get_evaluation_price(execution.symbol)
+        quantity = float(trade_exit.filled_qty)
+        exit_price = float(trade_exit.filled_avg_price)
+        due_at = _utc(
+            trade_exit.closed_at
+            or trade_exit.updated_at
+            or trade_exit.created_at
+        )
         return self._persist(
             db,
             source_type="EXECUTED",
@@ -304,7 +318,10 @@ class OutcomePipeline:
             symbol=execution.symbol,
             decision="ACCEPT",
             entry_price=entry_price,
-            evaluation_price=price,
+            evaluation_price=EvaluationPrice(
+                price=exit_price,
+                source="alpaca_exit_fill",
+            ),
             notional=entry_price * quantity,
             due_at=due_at,
             evaluated_at=evaluated_at,

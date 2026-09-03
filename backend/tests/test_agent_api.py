@@ -31,6 +31,7 @@ def _client(db_session):
 def test_agent_status_reports_observe_mode(monkeypatch, db_session):
     monkeypatch.setattr(settings, "autonomous_agent_enabled", True)
     monkeypatch.setattr(settings, "paper_execution_enabled", False)
+    monkeypatch.setattr(settings, "autonomous_new_entries_enabled", False)
 
     with _client(db_session) as client:
         response = client.get("/api/agent/status")
@@ -40,11 +41,13 @@ def test_agent_status_reports_observe_mode(monkeypatch, db_session):
     assert response.json()["mode"] == "OBSERVE"
     assert response.json()["paper"] is True
     assert response.json()["paper_execution_enabled"] is False
+    assert response.json()["new_entries_enabled"] is False
 
 
 def test_agent_status_reports_autonomous_paper_mode(monkeypatch, db_session):
     monkeypatch.setattr(settings, "autonomous_agent_enabled", True)
     monkeypatch.setattr(settings, "paper_execution_enabled", True)
+    monkeypatch.setattr(settings, "autonomous_new_entries_enabled", True)
 
     with _client(db_session) as client:
         response = client.get("/api/agent/status")
@@ -52,6 +55,7 @@ def test_agent_status_reports_autonomous_paper_mode(monkeypatch, db_session):
     assert response.status_code == 200
     assert response.json()["mode"] == "AUTONOMOUS_PAPER"
     assert response.json()["paper"] is True
+    assert response.json()["new_entries_enabled"] is True
 
 
 def test_status_and_cycle_endpoints_report_last_cycle(db_session):
@@ -67,7 +71,11 @@ def test_status_and_cycle_endpoints_report_last_cycle(db_session):
         analyzed_count=1,
         rejected_count=1,
         shadow_created_count=1,
-        summary_json='{"executions_synced": 3, "executions_filled": 1}',
+        summary_json=(
+            '{"executions_synced": 3, "executions_filled": 1, '
+            '"open_positions_checked": 2, "exit_holds": 1, '
+            '"exits_triggered": 1, "exits_synced": 1, "exits_filled": 1}'
+        ),
     )
     db_session.add(cycle)
     db_session.commit()
@@ -89,6 +97,11 @@ def test_status_and_cycle_endpoints_report_last_cycle(db_session):
     assert body["last_cycle_counts"]["executions_filled"] == 1
     assert body["last_cycle"]["executions_synced"] == 3
     assert body["last_cycle"]["executions_filled"] == 1
+    assert body["open_positions_checked"] == 2
+    assert body["exit_holds"] == 1
+    assert body["exits_triggered"] == 1
+    assert body["exits_synced"] == 1
+    assert body["exits_filled"] == 1
     assert listing.json()[0]["shadow_created_count"] == 1
     assert detail.json()["id"] == cycle.id
     assert missing.status_code == 404
