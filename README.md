@@ -235,17 +235,17 @@ The TSLA paper position was subsequently closed by the autonomous `TIME_EXIT` pa
 
 ## Public deployment
 
-The final public demo architecture is Vercel (read-only Next.js terminal) plus a
-Railway FastAPI service, a separate Railway autonomous worker, and one shared
-Railway PostgreSQL database. Alpaca remains PAPER-only; Azure OpenAI, NVIDIA,
-Alpaca, and database credentials remain server-side.
+The first-stage public demo architecture is Vercel (read-only Next.js terminal),
+a Back4App FastAPI container, and Neon PostgreSQL. Alpaca remains PAPER-only;
+Azure OpenAI, NVIDIA, Alpaca, and database credentials remain server-side.
 
-The hosted jury profile is autonomous **OBSERVE** mode:
+The public API container does not run the autonomous worker, so its truthful
+hosted status is **AGENT OFFLINE**:
 
 ```dotenv
 ALPACA_PAPER=true
-AUTONOMOUS_AGENT_ENABLED=true
-AUTONOMOUS_NEW_ENTRIES_ENABLED=true
+AUTONOMOUS_AGENT_ENABLED=false
+AUTONOMOUS_NEW_ENTRIES_ENABLED=false
 PAPER_EXECUTION_ENABLED=false
 PUBLIC_AGENT_TRIGGER_ENABLED=false
 PUBLIC_WRITE_API_ENABLED=false
@@ -253,20 +253,18 @@ AUTONOMOUS_CYCLE_SECONDS=300
 AUTONOMOUS_STALE_CYCLE_SECONDS=900
 ```
 
-The worker can discover and evaluate fresh decisions, but genuine accepts are
-held and no new Alpaca PAPER order is submitted. The public dashboard still
-shows the verified persisted BUY → `TIME_EXIT` → SELL lifecycle, realized P&L,
-and counterfactual examples without asking a judge to trade. Live-money trading
-is not supported.
+No recurring cycle or new entry runs in the API container, and no new Alpaca
+PAPER order can be submitted. The public dashboard still shows the verified
+persisted BUY → `TIME_EXIT` → SELL lifecycle, realized P&L, and counterfactual
+examples without asking a judge to trade. Live-money trading is not supported.
 
 All HTTP mutation/development routes are also disabled in the hosted demo by
-`PUBLIC_WRITE_API_ENABLED=false`. This API gate affects public HTTP requests
-only; the separate worker continues calling the existing Python services
-directly. Manual run-once remains independently protected by
-`PUBLIC_AGENT_TRIGGER_ENABLED=false`.
+`PUBLIC_WRITE_API_ENABLED=false`. Manual run-once remains independently
+protected by `PUBLIC_AGENT_TRIGGER_ENABLED=false`. A continuously running
+autonomous worker is intentionally not hosted in this first stage.
 
 Deployment commands, PostgreSQL initialization, explicit demo-data migration,
-CORS setup, Vercel/Railway configuration, validation, and the public API audit
+CORS setup, Vercel/Back4App/Neon configuration, validation, and the public API audit
 are documented in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Day 03 decision dashboard and replay

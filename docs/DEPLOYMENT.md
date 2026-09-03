@@ -1,186 +1,144 @@
 # REGRET public demo deployment
 
-This runbook prepares a read-only public jury dashboard backed by an autonomous
-OBSERVE worker. It does not deploy resources, enable paper order submission, or
-support live-money trading.
+The public hackathon stack is a read-only Vercel dashboard backed by a
+Back4App FastAPI container and persistent Neon PostgreSQL. It does not enable
+paper order submission or live-money trading.
 
 ## Architecture
 
 ```text
 Public browser
   -> Vercel (Next.js, frontend/)
-  -> Railway FastAPI service
-       -> Railway PostgreSQL <- Railway autonomous worker
+  -> Back4App Container (FastAPI, repository root Dockerfile)
+       -> Neon PostgreSQL
        -> Alpaca PAPER / Azure OpenAI / NVIDIA NIM (server-side only)
 ```
 
-The FastAPI service and worker must receive the same `DATABASE_URL`. Only
-`NEXT_PUBLIC_API_BASE_URL` belongs in Vercel; brokerage, model-provider, and
-database credentials must never be configured as `NEXT_PUBLIC_*` values.
+The infinite autonomous worker is intentionally not hosted in this first
+stage and must never be embedded in FastAPI. The dashboard therefore reports
+`AGENT OFFLINE` while retaining verified autonomous Alpaca PAPER evidence from
+the persisted demo dataset.
 
-## A. Railway
+## Safe public configuration
 
-1. Create one Railway project and provision PostgreSQL.
-2. Add a backend service from this repository. Keep the repository root as the
-   service root.
-3. Use build command `pip install -r requirements.txt`.
-4. On the backend service only, use pre-deploy command
-   `python -m backend.scripts.init_db`. It calls SQLAlchemy `create_all`, which
-   creates missing tables and indexes but never drops or recreates data.
-5. Use start command
-   `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`.
-6. Set the health-check path to `/health`.
-7. Add a second service from the same repository for the worker, again using
-   the repository root and `pip install -r requirements.txt`.
-8. Use worker start command
-   `python -m backend.scripts.run_autonomous_agent`.
-9. Attach both services to the same PostgreSQL `DATABASE_URL`. Configure the
-   same Alpaca PAPER, Azure, NVIDIA, and autonomous settings in both services.
-   Do not expose these variables through Vercel.
-
-Use this public OBSERVE profile for both server roles:
+Configure these values in Back4App only:
 
 ```dotenv
 ALPACA_PAPER=true
-AUTONOMOUS_AGENT_ENABLED=true
-AUTONOMOUS_NEW_ENTRIES_ENABLED=true
+AUTONOMOUS_AGENT_ENABLED=false
+AUTONOMOUS_NEW_ENTRIES_ENABLED=false
 PAPER_EXECUTION_ENABLED=false
 PUBLIC_AGENT_TRIGGER_ENABLED=false
 PUBLIC_WRITE_API_ENABLED=false
 AUTONOMOUS_CYCLE_SECONDS=300
 AUTONOMOUS_STALE_CYCLE_SECONDS=900
-DATABASE_URL=<railway-postgres-url>
+AUTONOMOUS_MAX_CANDIDATES_PER_CYCLE=2
+DATABASE_URL=<private-neon-postgresql-url>
+CORS_ALLOWED_ORIGINS=https://<frontend-domain>
 ```
 
-Copy the existing Azure/NVIDIA/Alpaca variable names from `.env.example` into
-Railway's secret settings. Never commit their values. The worker is the only
-recurring scheduler; do not add an autonomous startup hook to FastAPI.
+Use the existing `.env.example` names for Alpaca, Azure OpenAI, and NVIDIA
+server credentials. Never put those values or `DATABASE_URL` in Vercel,
+`NEXT_PUBLIC_*`, Git, Dockerfile, logs, or documentation.
 
-## B. Vercel
+## Container
 
-1. Import the same repository in Vercel.
-2. Set **Root Directory** to `frontend`.
-3. Keep the standard Next.js build command (`npm run build`).
-4. Configure exactly one public backend setting:
+Back4App uses the repository root as its build context and the root
+`Dockerfile`. The image copies only the Python requirements and backend
+application, runs as a non-root user, exposes TCP port `8000`, and starts one
+FastAPI process:
 
-   ```dotenv
-   NEXT_PUBLIC_API_BASE_URL=https://<railway-backend-domain>
-   ```
+```text
+uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT --workers 1
+```
 
-5. Deploy only after the Railway backend has a stable HTTPS URL.
+The command uses port `8000` only as a local fallback. It does not start
+`backend.scripts.run_autonomous_agent`.
 
-`NEXT_PUBLIC_*` values are embedded into browser JavaScript at build time.
-Never place Alpaca, Azure, NVIDIA, or PostgreSQL credentials in them.
+## Neon initialization and verified data
 
-## C. CORS
+Neon requires an SSL/TLS PostgreSQL connection string; preserve all supplied
+query parameters. Keep it in the process environment only.
 
-After Vercel assigns the frontend URL, configure the Railway backend with a
-comma-separated list of exact origins:
+Initialize a fresh database non-destructively:
+
+```powershell
+$env:DATABASE_URL = "<private-neon-postgresql-url>"
+.\.venv\Scripts\python.exe -m backend.scripts.init_db
+```
+
+Export the verified local SQLite dataset to a temporary path:
+
+```powershell
+$env:DATABASE_URL = "sqlite:///./regret.db"
+.\.venv\Scripts\python.exe -m backend.scripts.export_demo_data `
+  --output "$env:TEMP\regret-demo-verified.json"
+```
+
+Then inject the Neon URL and import intentionally:
+
+```powershell
+$env:DATABASE_URL = "<private-neon-postgresql-url>"
+.\.venv\Scripts\python.exe -m backend.scripts.import_demo_data `
+  --input "$env:TEMP\regret-demo-verified.json"
+```
+
+The importer preserves IDs and relationships, skips exact records on repeat,
+and rolls back on conflicts. Delete the temporary export after hosted data is
+verified.
+
+## Back4App Container
+
+1. Connect the GitHub repository in Back4App Containers.
+2. Select branch `feat/autonomous-agent-loop`.
+3. Set the repository root as the root directory.
+4. Keep automatic deployment off unless feature-branch pushes should redeploy.
+5. Add the private server environment values and safe flags above.
+6. Initially set `CORS_ALLOWED_ORIGINS=http://localhost:3000` if the Vercel URL
+   is not known.
+7. Create the free container and verify its generated HTTPS URL.
+
+Validate before deploying the frontend:
+
+```text
+GET  https://<backend-domain>/health                   -> 200
+GET  https://<backend-domain>/api/regret/metrics       -> 200
+POST https://<backend-domain>/api/agent/run-once       -> 403
+POST https://<backend-domain>/api/scout/run            -> 403
+```
+
+## Vercel
+
+Deploy from the `frontend` directory or configure it as the Git project root.
+The only public environment variable is:
+
+```dotenv
+NEXT_PUBLIC_API_BASE_URL=https://<back4app-backend-domain>
+```
+
+After Vercel assigns the production URL, set Back4App to its exact origin:
 
 ```dotenv
 CORS_ALLOWED_ORIGINS=https://<frontend-domain>
 ```
 
-For a temporary local plus hosted test, use:
+Do not use a wildcard. Redeploy/restart the API and confirm browser requests
+reach Back4App rather than localhost.
 
-```dotenv
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,https://<frontend-domain>
-```
+## Final validation
 
-Do not use `*`. Restart the backend after changing CORS settings.
+Verify the public terminal shows:
 
-## D. Verified demo data migration
-
-The migration is intentional and one-time; it never runs during application
-startup. It copies persisted records without recomputing decisions or outcomes.
-
-1. Export the local SQLite dataset to a secure location outside the repository:
-
-   ```powershell
-   $env:DATABASE_URL = "sqlite:///./regret.db"
-   .\.venv\Scripts\python.exe -m backend.scripts.export_demo_data `
-     --output "$env:TEMP\regret-demo-verified.json"
-   ```
-
-2. Inspect the JSON before transfer. It should contain only the documented
-   database tables and no credentials. Keep it private even though it contains
-   no API secrets, because it is execution evidence.
-3. Transfer it through a secure administrative channel to a one-time Railway
-   shell/job with the same `DATABASE_URL` as the application.
-4. Initialize the target schema, then import:
-
-   ```text
-   python -m backend.scripts.init_db
-   python -m backend.scripts.import_demo_data --input /secure/path/regret-demo-verified.json
-   ```
-
-The importer validates format, table/column compatibility, IDs, datetimes, and
-existing rows. Matching records are skipped on repeat runs; conflicts fail and
-roll back the transaction. PostgreSQL ID sequences are advanced after explicit
-primary-key import. Delete the transferred JSON after validation according to
-the platform's secure file-handling workflow.
-
-## E. Validation
-
-Before sharing the public URL, verify:
-
-```text
-GET https://<backend-domain>/health
-GET https://<backend-domain>/api/agent/status
-GET https://<backend-domain>/api/regret/metrics
-GET https://<backend-domain>/api/executions
-GET https://<backend-domain>/api/exits
-POST https://<backend-domain>/api/agent/run-once  -> 403
-POST https://<backend-domain>/api/scout/run      -> 403
-```
-
-Then open the Vercel URL and check:
-
-- `AGENT ACTIVE · OBSERVE`
-- TSLA TRADE replay with confirmed BUY, `TIME_EXIT`, SELL, realized P&L, and
-  `BAD_EXECUTION`
+- `PAPER MODE`, `API HEALTHY`, and truthful `AGENT OFFLINE`
+- persisted Decision Value and evaluated-decision metrics
 - DUO `AVOIDED_LOSS` replay
 - BIAF `MISSED_ALPHA` replay
-- EN -> ID -> EN, API health, metrics, and the audit trail
+- TSLA confirmed BUY, `TIME_EXIT`, confirmed SELL, realized P&L, and
+  `BAD_EXECUTION`
+- EN -> ID -> EN without layout errors
+- no BUY, SELL, CLOSE, EXECUTE, or manual cycle controls
 
-No judge action or new order is required to understand the project.
-
-## F. Final safety values
-
-Re-check these exact Railway values after every configuration change:
-
-```dotenv
-ALPACA_PAPER=true
-PAPER_EXECUTION_ENABLED=false
-PUBLIC_AGENT_TRIGGER_ENABLED=false
-PUBLIC_WRITE_API_ENABLED=false
-AUTONOMOUS_AGENT_ENABLED=true
-AUTONOMOUS_NEW_ENTRIES_ENABLED=true
-AUTONOMOUS_CYCLE_SECONDS=300
-AUTONOMOUS_STALE_CYCLE_SECONDS=900
-```
-
-With this profile, fresh autonomous analysis continues, rejected decisions can
-produce shadow outcomes, and genuine accepts are recorded as execution-held.
-No new Alpaca PAPER BUY is submitted. Live-money trading is unsupported.
-
-## Public API audit
-
-The dashboard calls GET endpoints only. `/health` is constant-time and invokes
-no database write, Scout, LLM, autonomous cycle, or Alpaca client.
-
-| Endpoint class | Classification | Public OBSERVE behavior |
-| --- | --- | --- |
-| GET API endpoints | Read-only; account/mover reads may call Alpaca | Dashboard uses persisted read endpoints |
-| `POST /api/agent/run-once` | Expensive and state-changing | Requires both write API and manual-agent gates; hosted profile returns 403 |
-| `POST /api/scout/run` | Market-data call and database mutation | Blocked with 403 by `PUBLIC_WRITE_API_ENABLED=false` |
-| `POST /api/candidates/{id}/analyze` | LLM-expensive and database mutation | Blocked with 403 by `PUBLIC_WRITE_API_ENABLED=false` |
-| `POST /api/decisions/{id}/route` | Execution-sensitive | Blocked with 403 by the write gate; execution kill switch remains a second defense |
-| Execution sync/outcome evaluation POSTs | Read-only against Alpaca, but update persisted state | Blocked with 403 by `PUBLIC_WRITE_API_ENABLED=false` |
-
-CORS permits browser GETs only, but CORS is not authentication. The application
-therefore rejects every HTTP `POST`, `PUT`, `PATCH`, and `DELETE` below `/api`
-while `PUBLIC_WRITE_API_ENABLED=false`, before route dependencies or services
-run. This guard does not affect the Railway worker because it calls Python
-services directly. Keep authenticated administration in front of these routes
-if remote write access is intentionally enabled later.
+Check browser console/network for CORS errors, localhost calls, application
+exceptions, and secret values. Recheck the safe public flags after every
+provider-side configuration change. No recurring worker is part of this
+deployment; a scheduled service-to-service runner is future work.
