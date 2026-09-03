@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # autonomous cycles. This gate is independent from execution safety.
     public_agent_trigger_enabled: bool = False
 
+    # The hosted dashboard is read-only. Keep every HTTP mutation/development
+    # route disabled unless an operator intentionally enables local API writes.
+    # This does not affect the autonomous worker, which calls services directly.
+    public_write_api_enabled: bool = False
+
     # 0.02 = 2% of paper account equity
     execution_position_pct: float = Field(
         default=0.02,

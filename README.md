@@ -248,6 +248,7 @@ AUTONOMOUS_AGENT_ENABLED=true
 AUTONOMOUS_NEW_ENTRIES_ENABLED=true
 PAPER_EXECUTION_ENABLED=false
 PUBLIC_AGENT_TRIGGER_ENABLED=false
+PUBLIC_WRITE_API_ENABLED=false
 AUTONOMOUS_CYCLE_SECONDS=300
 AUTONOMOUS_STALE_CYCLE_SECONDS=900
 ```
@@ -257,6 +258,12 @@ held and no new Alpaca PAPER order is submitted. The public dashboard still
 shows the verified persisted BUY → `TIME_EXIT` → SELL lifecycle, realized P&L,
 and counterfactual examples without asking a judge to trade. Live-money trading
 is not supported.
+
+All HTTP mutation/development routes are also disabled in the hosted demo by
+`PUBLIC_WRITE_API_ENABLED=false`. This API gate affects public HTTP requests
+only; the separate worker continues calling the existing Python services
+directly. Manual run-once remains independently protected by
+`PUBLIC_AGENT_TRIGGER_ENABLED=false`.
 
 Deployment commands, PostgreSQL initialization, explicit demo-data migration,
 CORS setup, Vercel/Railway configuration, validation, and the public API audit

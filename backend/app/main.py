@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.app.api.agent_routes import router as agent_router
 from backend.app.api.routes import router
@@ -33,6 +34,28 @@ app.add_middleware(
 )
 
 
+PUBLIC_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@app.middleware("http")
+async def protect_public_write_api(request: Request, call_next):
+    if (
+        request.url.path.startswith("/api/")
+        and request.method.upper() in PUBLIC_WRITE_METHODS
+        and not settings.public_write_api_enabled
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "Public write API is disabled for this deployment."
+                )
+            },
+        )
+
+    return await call_next(request)
+
+
 @app.get("/health")
 def health():
     return {
@@ -46,6 +69,7 @@ app.include_router(
     router,
     prefix="/api",
 )
+
 
 app.include_router(
     agent_router,

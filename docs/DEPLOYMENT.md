@@ -46,6 +46,7 @@ AUTONOMOUS_AGENT_ENABLED=true
 AUTONOMOUS_NEW_ENTRIES_ENABLED=true
 PAPER_EXECUTION_ENABLED=false
 PUBLIC_AGENT_TRIGGER_ENABLED=false
+PUBLIC_WRITE_API_ENABLED=false
 AUTONOMOUS_CYCLE_SECONDS=300
 AUTONOMOUS_STALE_CYCLE_SECONDS=900
 DATABASE_URL=<railway-postgres-url>
@@ -130,6 +131,7 @@ GET https://<backend-domain>/api/regret/metrics
 GET https://<backend-domain>/api/executions
 GET https://<backend-domain>/api/exits
 POST https://<backend-domain>/api/agent/run-once  -> 403
+POST https://<backend-domain>/api/scout/run      -> 403
 ```
 
 Then open the Vercel URL and check:
@@ -151,6 +153,7 @@ Re-check these exact Railway values after every configuration change:
 ALPACA_PAPER=true
 PAPER_EXECUTION_ENABLED=false
 PUBLIC_AGENT_TRIGGER_ENABLED=false
+PUBLIC_WRITE_API_ENABLED=false
 AUTONOMOUS_AGENT_ENABLED=true
 AUTONOMOUS_NEW_ENTRIES_ENABLED=true
 AUTONOMOUS_CYCLE_SECONDS=300
@@ -169,14 +172,15 @@ no database write, Scout, LLM, autonomous cycle, or Alpaca client.
 | Endpoint class | Classification | Public OBSERVE behavior |
 | --- | --- | --- |
 | GET API endpoints | Read-only; account/mover reads may call Alpaca | Dashboard uses persisted read endpoints |
-| `POST /api/agent/run-once` | Expensive and state-changing | Blocked with 403 by `PUBLIC_AGENT_TRIGGER_ENABLED=false` |
-| `POST /api/scout/run` | Market-data call and database mutation | Development API; not used by the public frontend |
-| `POST /api/candidates/{id}/analyze` | LLM-expensive and database mutation | Development API; not used by the public frontend |
-| `POST /api/decisions/{id}/route` | Execution-sensitive | `PAPER_EXECUTION_ENABLED=false` prevents order submission |
-| Execution sync/outcome evaluation POSTs | Read-only against Alpaca, but update persisted state | Development/operations APIs; not used by the public frontend |
+| `POST /api/agent/run-once` | Expensive and state-changing | Requires both write API and manual-agent gates; hosted profile returns 403 |
+| `POST /api/scout/run` | Market-data call and database mutation | Blocked with 403 by `PUBLIC_WRITE_API_ENABLED=false` |
+| `POST /api/candidates/{id}/analyze` | LLM-expensive and database mutation | Blocked with 403 by `PUBLIC_WRITE_API_ENABLED=false` |
+| `POST /api/decisions/{id}/route` | Execution-sensitive | Blocked with 403 by the write gate; execution kill switch remains a second defense |
+| Execution sync/outcome evaluation POSTs | Read-only against Alpaca, but update persisted state | Blocked with 403 by `PUBLIC_WRITE_API_ENABLED=false` |
 
-CORS permits browser GETs only. CORS is not authentication, so deployment
-safety still depends on the manual-cycle gate and the enforced execution kill
-switch. The remaining development POST endpoints should not be advertised as
-public demo controls; add authenticated administration before intentionally
-exposing them for remote operation.
+CORS permits browser GETs only, but CORS is not authentication. The application
+therefore rejects every HTTP `POST`, `PUT`, `PATCH`, and `DELETE` below `/api`
+while `PUBLIC_WRITE_API_ENABLED=false`, before route dependencies or services
+run. This guard does not affect the Railway worker because it calls Python
+services directly. Keep authenticated administration in front of these routes
+if remote write access is intentionally enabled later.
