@@ -6,9 +6,19 @@ import {
   graphDirection,
 } from "../src/lib/counterfactual-graph";
 import {
+  persistedReplayDecisionIds,
   signedDecisionValue,
   unsignedMagnitude,
 } from "../src/lib/regret-display";
+
+test("replay-ready decisions require both a persisted outcome and regret event", () => {
+  const ready = persistedReplayDecisionIds(
+    [{ risk_decision_id: 7 }, { risk_decision_id: 8 }],
+    [{ risk_decision_id: 7 }, { risk_decision_id: 9 }],
+  );
+
+  assert.deepEqual([...ready], [7]);
+});
 
 test("aggregate Missed Alpha is displayed as an unsigned magnitude", () => {
   assert.equal(unsignedMagnitude(-22.77), 22.77);

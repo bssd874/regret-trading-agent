@@ -37,6 +37,7 @@ export type Translation = {
     confidence: string;
     risk: string;
     noTrade: string;
+    replayReady: string;
     fallbackCritic: string;
     safeFailure: string;
   };
@@ -142,6 +143,7 @@ export const translations: Record<Language, Translation> = {
       confidence: "Conf",
       risk: "Risk",
       noTrade: "NO TRADE",
+      replayReady: "Replay ready",
       fallbackCritic: "Fallback critic",
       safeFailure: "Stopped safely before risk or execution.",
     },
@@ -245,6 +247,7 @@ export const translations: Record<Language, Translation> = {
       confidence: "Kep",
       risk: "Risiko",
       noTrade: "TIDAK MASUK",
+      replayReady: "Replay siap",
       fallbackCritic: "Fallback Critic",
       safeFailure: "Dihentikan dengan aman sebelum risiko atau eksekusi.",
     },

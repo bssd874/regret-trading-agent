@@ -12,7 +12,7 @@ import {
   UserRound,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CounterfactualGraph } from "@/components/counterfactual-graph";
 import { useLanguage } from "@/i18n/language-provider";
@@ -41,11 +41,84 @@ import {
   toUserMessage,
 } from "@/lib/presentation";
 import {
+  persistedReplayDecisionIds,
   signedDecisionValue,
   unsignedMagnitude,
 } from "@/lib/regret-display";
 
 type LoadState = "loading" | "ready" | "offline";
+type DashboardSection = "overview" | "decisions" | "replay";
+
+function sectionFromHash(hash: string): DashboardSection | null {
+  const section = hash.replace(/^#/, "");
+  return section === "overview" || section === "decisions" || section === "replay"
+    ? section
+    : null;
+}
+
+function useActiveDashboardSection() {
+  const [activeSection, setActiveSection] = useState<DashboardSection>("overview");
+  const workspaceSection = useRef<Exclude<DashboardSection, "overview">>("decisions");
+  const navigationTarget = useRef<DashboardSection | null>(null);
+  const navigationTimer = useRef<number | null>(null);
+
+  const navigateTo = useCallback((section: DashboardSection) => {
+    if (section !== "overview") workspaceSection.current = section;
+    navigationTarget.current = section;
+    setActiveSection(section);
+
+    if (navigationTimer.current !== null) window.clearTimeout(navigationTimer.current);
+    navigationTimer.current = window.setTimeout(() => {
+      navigationTarget.current = null;
+      navigationTimer.current = null;
+    }, 800);
+  }, []);
+
+  useEffect(() => {
+    let frame: number | null = null;
+
+    const updateFromScroll = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const hashSection = sectionFromHash(window.location.hash);
+        if (hashSection === "decisions" || hashSection === "replay") {
+          workspaceSection.current = hashSection;
+        }
+
+        const overview = document.getElementById("overview");
+        const overviewIsPrimary = overview
+          ? overview.getBoundingClientRect().bottom > Math.min(window.innerHeight * 0.28, 220)
+          : true;
+        const nextSection = navigationTarget.current
+          ?? (overviewIsPrimary ? "overview" : workspaceSection.current);
+        setActiveSection((current) => current === nextSection ? current : nextSection);
+        frame = null;
+      });
+    };
+
+    const updateFromHash = () => {
+      const hashSection = sectionFromHash(window.location.hash);
+      if (hashSection) {
+        if (hashSection !== "overview") workspaceSection.current = hashSection;
+        setActiveSection(hashSection);
+      }
+      updateFromScroll();
+    };
+
+    window.addEventListener("scroll", updateFromScroll, { passive: true });
+    window.addEventListener("hashchange", updateFromHash);
+    updateFromHash();
+
+    return () => {
+      window.removeEventListener("scroll", updateFromScroll);
+      window.removeEventListener("hashchange", updateFromHash);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      if (navigationTimer.current !== null) window.clearTimeout(navigationTimer.current);
+    };
+  }, []);
+
+  return { activeSection, navigateTo };
+}
 
 function classificationTone(classification: Classification): string {
   return {
@@ -146,6 +219,13 @@ function DashboardHeader({
   onRefresh: () => void;
   copy: Translation;
 }) {
+  const { activeSection, navigateTo } = useActiveDashboardSection();
+  const navigation: Array<{ id: DashboardSection; label: string }> = [
+    { id: "overview", label: copy.header.overview },
+    { id: "decisions", label: copy.header.decisions },
+    { id: "replay", label: copy.header.replay },
+  ];
+
   return (
     <header className="flex min-h-[100px] flex-wrap items-center gap-x-8 gap-y-4 border-b border-[#3b4548] py-4">
       <div className="w-[265px] shrink-0">
@@ -154,9 +234,20 @@ function DashboardHeader({
       </div>
 
       <nav className="order-3 flex h-full w-full min-w-0 items-center justify-between gap-3 text-[12px] font-semibold uppercase text-slate-300 sm:order-none sm:w-auto sm:flex-1 sm:justify-start sm:gap-10" aria-label="Dashboard sections">
-        <a className="border-b border-cyan-300 py-[34px] text-cyan-300" href="#overview">{copy.header.overview}</a>
-        <a className="py-[34px] transition hover:text-white" href="#decisions">{copy.header.decisions}</a>
-        <a className="py-[34px] transition hover:text-white" href="#replay">{copy.header.replay}</a>
+        {navigation.map((item) => {
+          const active = activeSection === item.id;
+          return (
+            <a
+              aria-current={active ? "location" : undefined}
+              className={`border-b py-[34px] transition ${active ? "border-cyan-300 text-cyan-300" : "border-transparent hover:text-white"}`}
+              href={`#${item.id}`}
+              key={item.id}
+              onClick={() => navigateTo(item.id)}
+            >
+              {item.label}
+            </a>
+          );
+        })}
       </nav>
 
       <div className="ml-auto flex h-12 items-center gap-6 border-l border-r border-[#3b4548] px-7 text-[12px] font-medium uppercase tracking-[0.12em] text-slate-300">
@@ -227,13 +318,13 @@ function Hero({ data, copy }: { data: DashboardData; copy: Translation }) {
   const missedCount = data.metrics.classification_counts.MISSED_ALPHA;
 
   return (
-    <section className="grid gap-12 border-b border-[#3b4548] py-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-end lg:py-14" id="overview">
+    <section className="grid gap-12 border-b border-[#3b4548] py-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-end lg:py-9" id="overview">
       <div>
         <p className="text-[12px] font-semibold uppercase tracking-[0.1em] text-slate-400">{copy.hero.decisionValue}</p>
-        <p className="editorial-number mt-5 text-[46px] font-semibold leading-none tracking-[-0.035em] text-cyan-300 tabular-nums">
+        <p className="editorial-number mt-4 text-[46px] font-semibold leading-none tracking-[-0.035em] text-cyan-300 tabular-nums">
           {formatSignedCurrency(data.metrics.decision_value)}
         </p>
-        <p className="mt-7 text-[18px] leading-7 text-slate-100">
+        <p className="mt-5 text-[18px] leading-7 text-slate-100">
           {positive ? copy.hero.positiveDescription : copy.hero.negativeDescription}
         </p>
         <p className="mt-2 max-w-[710px] text-[18px] leading-7 text-slate-400">{copy.hero.explanation}</p>
@@ -252,6 +343,7 @@ function Hero({ data, copy }: { data: DashboardData; copy: Translation }) {
 function DecisionStream({
   decisions,
   failedCandidates,
+  replayReadyIds,
   selectedId,
   onSelect,
   language,
@@ -259,6 +351,7 @@ function DecisionStream({
 }: {
   decisions: DecisionListItem[];
   failedCandidates: Candidate[];
+  replayReadyIds: ReadonlySet<number>;
   selectedId: number | null;
   onSelect: (id: number) => void;
   language: Language;
@@ -275,6 +368,7 @@ function DecisionStream({
       <div className="terminal-scroll mt-3 max-h-[520px] overflow-y-auto pr-2">
         {orderedDecisions.map((decision) => {
           const selected = decision.id === selectedId;
+          const replayReady = replayReadyIds.has(decision.id);
           return (
             <button
               aria-pressed={selected}
@@ -285,9 +379,15 @@ function DecisionStream({
             >
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                     <span className="text-[18px] text-slate-100">{decision.symbol}</span>
                     <span className="bg-[#202526] px-1.5 py-0.5 text-[9px] font-semibold text-slate-200">{decisionStatusLabel(decision.decision, language)}</span>
+                    {replayReady && (
+                      <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.04em] text-cyan-300/70">
+                        <span className="size-1 rounded-full bg-cyan-300/80" />
+                        {copy.stream.replayReady}
+                      </span>
+                    )}
                   </div>
                   <p className="editorial-number mt-2 text-[15px] text-slate-300">
                     {copy.stream.confidence}: {formatPercent(decision.adjusted_confidence)}
@@ -586,6 +686,10 @@ export function Dashboard() {
     () => data?.candidates.filter((candidate) => ["ANALYSIS_FAILED", "CRITIC_FAILED", "RISK_FAILED"].includes(candidate.status)) ?? [],
     [data],
   );
+  const replayReadyIds = useMemo(
+    () => persistedReplayDecisionIds(data?.outcomes ?? [], data?.regretEvents ?? []),
+    [data],
+  );
   const selectedDecision = data?.decisions.find((decision) => decision.id === selectedId);
   const selectedOutcome = data?.outcomes.find((outcome) => outcome.risk_decision_id === selectedId);
   const selectedEvent = data?.regretEvents.find((event) => event.risk_decision_id === selectedId);
@@ -617,7 +721,7 @@ export function Dashboard() {
       <Hero copy={copy} data={data} />
 
       <section className="grid gap-10 border-b border-[#3b4548] py-12 lg:grid-cols-[minmax(310px,0.47fr)_minmax(0,1fr)] lg:items-start">
-        <DecisionStream copy={copy} decisions={data.decisions} failedCandidates={failedCandidates} language={language} onSelect={setSelectedId} selectedId={selectedId} />
+        <DecisionStream copy={copy} decisions={data.decisions} failedCandidates={failedCandidates} language={language} onSelect={setSelectedId} replayReadyIds={replayReadyIds} selectedId={selectedId} />
         <ReplaySurface copy={copy} decision={selectedDecision} event={selectedEvent} onReplay={replay} outcome={selectedOutcome} replayKey={replayKey} />
       </section>
 

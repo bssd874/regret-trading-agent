@@ -30,10 +30,10 @@ export function CounterfactualGraph({
         className="replay-line"
         d={model.path}
         fill="none"
-        stroke="#52646b"
+        stroke="#687d84"
         strokeDasharray="3 7"
         strokeLinecap="round"
-        strokeWidth="2"
+        strokeWidth="2.25"
       />
       {model.points.map((point, index) => (
         <g className={index === 1 ? "replay-dot" : undefined} key={point.kind}>
@@ -41,10 +41,10 @@ export function CounterfactualGraph({
             data-factual-point={point.kind}
             cx={point.x}
             cy={point.y}
-            fill="#0d1011"
+            fill="#92a3a8"
             r="5"
-            stroke="#090b0c"
-            strokeWidth="3"
+            stroke="#20292c"
+            strokeWidth="2.5"
           />
           <text
             fill="#a7afb1"
