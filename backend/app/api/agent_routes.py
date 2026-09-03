@@ -25,6 +25,7 @@ def _load_json(value: str, fallback):
 
 
 def agent_cycle_payload(cycle: AgentCycle) -> dict:
+    summary = _load_json(cycle.summary_json, {})
     return {
         "id": cycle.id,
         "trigger": cycle.trigger,
@@ -43,7 +44,9 @@ def agent_cycle_payload(cycle: AgentCycle) -> dict:
         "execution_held_count": cycle.execution_held_count,
         "outcomes_evaluated_count": cycle.outcomes_evaluated_count,
         "regret_events_created_count": cycle.regret_events_created_count,
-        "summary": _load_json(cycle.summary_json, {}),
+        "executions_synced": int(summary.get("executions_synced", 0)),
+        "executions_filled": int(summary.get("executions_filled", 0)),
+        "summary": summary,
         "errors": _load_json(cycle.errors_json, []),
         "created_at": cycle.created_at,
     }
@@ -72,6 +75,8 @@ def get_agent_status(db: Session = Depends(get_db)):
             "executions_held": last_cycle.execution_held_count,
             "outcomes_evaluated": last_cycle.outcomes_evaluated_count,
             "regret_events_created": last_cycle.regret_events_created_count,
+            "executions_synced": payload["executions_synced"],
+            "executions_filled": payload["executions_filled"],
         }
         if last_cycle is not None
         else None
@@ -91,6 +96,8 @@ def get_agent_status(db: Session = Depends(get_db)):
         "last_cycle_status": last_cycle.status if last_cycle else None,
         "last_cycle_started_at": last_cycle.started_at if last_cycle else None,
         "last_cycle_finished_at": last_cycle.finished_at if last_cycle else None,
+        "executions_synced": payload["executions_synced"] if payload else 0,
+        "executions_filled": payload["executions_filled"] if payload else 0,
         "last_cycle_counts": counts,
     }
 

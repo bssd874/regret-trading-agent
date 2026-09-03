@@ -117,12 +117,14 @@ The repository currently makes no claim of a live executed-trade evaluation; tha
 
 ## REGRET Autonomous Loop
 
-The autonomous loop is a thin scheduler around the existing production pipeline. It evaluates due outcomes, runs Market Scout, processes only candidates returned by that cycle, calls the existing Decision Pipeline, and routes only the persisted RiskDecision. It does not add a strategy, model, risk formula, or trading path.
+The autonomous loop is a thin scheduler around the existing production pipeline. At the start of each cycle it read-only reconciles non-terminal paper executions through the existing `ExecutionSyncService`, then evaluates due outcomes, runs Market Scout, processes only candidates returned by that cycle, calls the existing Decision Pipeline, and routes only the persisted RiskDecision. It does not add a strategy, model, risk formula, or trading path.
 
 Two safety-derived modes are available:
 
 - **OBSERVE** — `AUTONOMOUS_AGENT_ENABLED=true` and `PAPER_EXECUTION_ENABLED=false`. Scouting, analysis, criticism, consensus, risk decisions, rejected-trade shadow routing, and due-outcome evaluation run automatically. A genuine `ACCEPT` is preserved unchanged and recorded in its cycle as `EXECUTION_HELD` with reason `PAPER_EXECUTION_DISABLED`; it is not routed, rejected, shadowed, or executed later.
 - **AUTONOMOUS PAPER** — `AUTONOMOUS_AGENT_ENABLED=true` and `PAPER_EXECUTION_ENABLED=true`. Only a genuine `ACCEPT` created by the current cycle may pass to the existing DecisionRouter and Alpaca paper execution. Historical accepts are never scanned or automatically executed.
+
+A newly submitted current-cycle paper order receives one immediate read-only status synchronization attempt. If it remains `new`, `accepted`, pending, or partially filled, later cycles synchronize it again. Known terminal states (`filled`, `canceled`, `expired`, and `rejected`) are not polled again. Genuine fill quantity and average price are persisted by the existing sync service, allowing the unchanged Outcome Engine to evaluate a filled execution when its horizon is due. One lookup failure is isolated to that execution and does not stop the cycle.
 
 Autonomy defaults off, and paper execution independently defaults off:
 
@@ -135,7 +137,7 @@ AUTONOMOUS_MAX_CANDIDATES_PER_CYCLE=2
 AUTONOMOUS_STALE_CYCLE_SECONDS=900
 ```
 
-Each scheduled or manual cycle is persisted as an `AgentCycle`, including its mode, heartbeat, terminal status, counts, candidate actions, and safe error metadata. A recent `RUNNING` heartbeat blocks overlap with `AGENT_CYCLE_ALREADY_RUNNING`; a heartbeat older than the configured stale window is marked `ABANDONED` before a new cycle is claimed.
+Each scheduled or manual cycle is persisted as an `AgentCycle`, including its mode, heartbeat, terminal status, counts, candidate actions, and safe error metadata. Backward-compatible reconciliation counts (`executions_synced` and `executions_filled`) are stored in its `summary_json` and exposed by the agent status and cycle APIs. A recent `RUNNING` heartbeat blocks overlap with `AGENT_CYCLE_ALREADY_RUNNING`; a heartbeat older than the configured stale window is marked `ABANDONED` before a new cycle is claimed.
 
 Run the three processes separately from the repository root:
 

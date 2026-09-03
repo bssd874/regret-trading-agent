@@ -21,6 +21,7 @@ from backend.app.services.autonomous_agent_service import (
     AutonomousAgent,
 )
 from backend.app.services.decision_router import decision_router
+from backend.app.services.execution_sync_service import ExecutionSyncService
 from backend.app.services.outcome_pipeline import OutcomePipeline
 from backend.app.services.paper_execution_service import paper_execution_service
 from backend.tests.test_decision_pipeline import (
@@ -32,7 +33,7 @@ from backend.tests.test_decision_pipeline import (
     build_pipeline,
 )
 from backend.tests.test_decision_router import _create_routing_chain
-from backend.tests.test_outcome_pipeline import FakeMarketData, _shadow
+from backend.tests.test_outcome_pipeline import FakeMarketData, NOW, _executed, _shadow
 
 
 def _settings(**overrides) -> Settings:
@@ -132,6 +133,7 @@ def _agent(
     pipeline=None,
     router=None,
     outcomes=None,
+    execution_sync=None,
     config=None,
     now_provider=None,
 ):
@@ -140,6 +142,7 @@ def _agent(
         pipeline=pipeline or build_pipeline(),
         router=router or MagicMock(),
         outcomes=outcomes or EmptyOutcomes(),
+        **({"execution_sync": execution_sync} if execution_sync else {}),
         config=config or _settings(),
         now_provider=now_provider,
     )
@@ -235,11 +238,20 @@ def test_accept_execution_on_routes_current_cycle_through_existing_router(
         "submit_long_market_order",
         mutate,
     )
+    provider = MagicMock()
+    provider.get_order.return_value = SimpleNamespace(
+        status="filled",
+        filled_qty="1.5",
+        filled_avg_price="101.25",
+    )
 
     cycle = _agent(
         router=decision_router,
+        execution_sync=ExecutionSyncService(provider),
         config=_settings(paper_execution_enabled=True),
     ).run_cycle(db=db_session)
+    execution = db_session.scalar(select(ExecutedTrade))
+    summary = json.loads(cycle.summary_json)
 
     assert cycle.mode == "AUTONOMOUS_PAPER"
     assert cycle.accepted_count == 1
@@ -247,7 +259,260 @@ def test_accept_execution_on_routes_current_cycle_through_existing_router(
     assert cycle.execution_held_count == 0
     assert _count(db_session, ExecutedTrade) == 1
     assert _count(db_session, ShadowTrade) == 0
+    assert execution.status == "filled"
+    assert execution.filled_qty == 1.5
+    assert execution.filled_avg_price == 101.25
+    assert summary["executions_synced"] == 1
+    assert summary["executions_filled"] == 1
+    assert summary["candidates"][0]["immediate_sync"]["status"] == "filled"
     mutate.assert_called_once()
+    provider.get_order.assert_called_once_with("paper-autonomous-1")
+
+
+@pytest.mark.parametrize(
+    "initial_status",
+    ["accepted", "new", "pending", "partially_filled"],
+)
+def test_non_terminal_execution_is_automatically_synchronized_and_stays_pending(
+    db_session,
+    candidate_factory,
+    initial_status,
+):
+    candidate = candidate_factory(symbol=f"P{initial_status[:5].upper()}")
+    risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
+    execution = _executed(
+        db_session,
+        candidate,
+        risk,
+        status=initial_status,
+        filled_qty=None,
+        filled_avg_price=None,
+    )
+    provider = MagicMock()
+    synchronized_status = (
+        "accepted" if initial_status == "pending" else initial_status
+    )
+    provider.get_order.return_value = SimpleNamespace(
+        status=synchronized_status,
+        filled_qty="0.5" if initial_status == "partially_filled" else None,
+        filled_avg_price=(
+            "100.5" if initial_status == "partially_filled" else None
+        ),
+    )
+
+    cycle = _agent(
+        symbols=(),
+        execution_sync=ExecutionSyncService(provider),
+    ).run_cycle(db=db_session)
+    summary = json.loads(cycle.summary_json)
+
+    db_session.refresh(execution)
+    assert cycle.status == "COMPLETED"
+    assert execution.status == synchronized_status
+    if initial_status == "partially_filled":
+        assert execution.filled_qty == 0.5
+        assert execution.filled_avg_price == 100.5
+    else:
+        assert execution.filled_qty is None
+        assert execution.filled_avg_price is None
+    assert summary["executions_synced"] == 1
+    assert summary["executions_filled"] == 0
+    provider.get_order.assert_called_once_with(execution.alpaca_order_id)
+
+
+def test_future_cycle_continues_sync_and_persists_later_fill(
+    db_session,
+    candidate_factory,
+):
+    candidate = candidate_factory(symbol="LATER")
+    risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
+    execution = _executed(
+        db_session,
+        candidate,
+        risk,
+        status="pending",
+        filled_qty=None,
+        filled_avg_price=None,
+    )
+    provider = MagicMock()
+    provider.get_order.side_effect = [
+        SimpleNamespace(
+            status="accepted",
+            filled_qty=None,
+            filled_avg_price=None,
+        ),
+        SimpleNamespace(
+            status="filled",
+            filled_qty="2.75",
+            filled_avg_price="99.40",
+        ),
+    ]
+    agent = _agent(
+        symbols=(),
+        execution_sync=ExecutionSyncService(provider),
+    )
+
+    first = agent.run_cycle(db=db_session)
+    second = agent.run_cycle(db=db_session)
+    first_summary = json.loads(first.summary_json)
+    second_summary = json.loads(second.summary_json)
+
+    db_session.refresh(execution)
+    assert first.status == "COMPLETED"
+    assert second.status == "COMPLETED"
+    assert first_summary["executions_synced"] == 1
+    assert first_summary["executions_filled"] == 0
+    assert second_summary["executions_synced"] == 1
+    assert second_summary["executions_filled"] == 1
+    assert execution.status == "filled"
+    assert execution.filled_qty == 2.75
+    assert execution.filled_avg_price == 99.4
+    assert provider.get_order.call_count == 2
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    ["filled", "CANCELED", "expired", "REJECTED"],
+)
+def test_terminal_execution_is_not_unnecessarily_synchronized(
+    db_session,
+    candidate_factory,
+    terminal_status,
+):
+    candidate = candidate_factory(symbol=terminal_status[:6].upper())
+    risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
+    _executed(
+        db_session,
+        candidate,
+        risk,
+        status=terminal_status,
+        filled_qty=1.0 if terminal_status.lower() == "filled" else None,
+        filled_avg_price=(
+            100.0 if terminal_status.lower() == "filled" else None
+        ),
+    )
+    provider = MagicMock()
+
+    cycle = _agent(
+        symbols=(),
+        execution_sync=ExecutionSyncService(provider),
+    ).run_cycle(db=db_session)
+    summary = json.loads(cycle.summary_json)
+
+    assert cycle.status == "COMPLETED"
+    assert summary["executions_synced"] == 0
+    assert summary["executions_filled"] == 0
+    assert summary["execution_reconciliation"]["eligible_count"] == 0
+    provider.get_order.assert_not_called()
+
+
+def test_one_execution_sync_failure_does_not_stop_reconciliation_or_cycle(
+    db_session,
+    candidate_factory,
+):
+    failed_candidate = candidate_factory(symbol="SYNCBAD")
+    failed_risk, _ = _create_routing_chain(
+        db_session,
+        failed_candidate,
+        decision="ACCEPT",
+    )
+    failed_execution = _executed(
+        db_session,
+        failed_candidate,
+        failed_risk,
+        status="accepted",
+        filled_qty=None,
+        filled_avg_price=None,
+    )
+    good_candidate = candidate_factory(symbol="SYNCOK")
+    good_risk, _ = _create_routing_chain(
+        db_session,
+        good_candidate,
+        decision="ACCEPT",
+    )
+    good_execution = _executed(
+        db_session,
+        good_candidate,
+        good_risk,
+        status="accepted",
+        filled_qty=None,
+        filled_avg_price=None,
+    )
+    provider = MagicMock()
+
+    def get_order(order_id):
+        if order_id == failed_execution.alpaca_order_id:
+            raise ConnectionError("paper order lookup unavailable")
+        return SimpleNamespace(
+            status="filled",
+            filled_qty="3",
+            filled_avg_price="102",
+        )
+
+    provider.get_order.side_effect = get_order
+    cycle = _agent(
+        symbols=(),
+        execution_sync=ExecutionSyncService(provider),
+    ).run_cycle(db=db_session)
+    summary = json.loads(cycle.summary_json)
+    errors = json.loads(cycle.errors_json)
+
+    db_session.refresh(failed_execution)
+    db_session.refresh(good_execution)
+    assert cycle.status == "PARTIAL_FAILED"
+    assert failed_execution.status == "accepted"
+    assert good_execution.status == "filled"
+    assert summary["executions_synced"] == 1
+    assert summary["executions_filled"] == 1
+    assert provider.get_order.call_count == 2
+    assert any(item["code"] == "EXECUTION_SYNC_FAILED" for item in errors)
+
+
+class FixedNowOutcomes:
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+
+    def evaluate_due(self, *, db):
+        return self.pipeline.evaluate_due(db=db, now=NOW)
+
+
+def test_reconciled_fill_is_eligible_for_existing_outcome_engine(
+    db_session,
+    candidate_factory,
+):
+    candidate = candidate_factory(symbol="OUTCOME")
+    risk, _ = _create_routing_chain(db_session, candidate, decision="ACCEPT")
+    execution = _executed(
+        db_session,
+        candidate,
+        risk,
+        status="accepted",
+        filled_qty=None,
+        filled_avg_price=None,
+    )
+    provider = MagicMock()
+    provider.get_order.return_value = SimpleNamespace(
+        status="filled",
+        filled_qty="10",
+        filled_avg_price="100",
+    )
+    outcomes = FixedNowOutcomes(
+        OutcomePipeline(market_data=FakeMarketData({candidate.symbol: 110.0}))
+    )
+
+    cycle = _agent(
+        symbols=(),
+        outcomes=outcomes,
+        execution_sync=ExecutionSyncService(provider),
+    ).run_cycle(db=db_session)
+
+    db_session.refresh(execution)
+    assert cycle.status == "COMPLETED"
+    assert execution.status == "filled"
+    assert cycle.outcomes_evaluated_count == 1
+    assert cycle.regret_events_created_count == 1
+    assert _count(db_session, OutcomeSnapshot) == 1
+    assert _count(db_session, RegretEvent) == 1
 
 
 def test_one_candidate_failure_does_not_stop_following_candidate(db_session):

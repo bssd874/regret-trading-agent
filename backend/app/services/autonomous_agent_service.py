@@ -10,16 +10,21 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import Settings, settings
 from backend.app.models.agent_cycle import AgentCycle
 from backend.app.models.candidate_trade import CandidateTrade
+from backend.app.models.executed_trade import ExecutedTrade
 from backend.app.models.outcome_snapshot import OutcomeSnapshot
 from backend.app.models.regret_event import RegretEvent
 from backend.app.models.risk_decision import RiskDecision
 from backend.app.services.decision_pipeline import decision_pipeline
 from backend.app.services.decision_router import decision_router
+from backend.app.services.execution_sync_service import execution_sync_service
 from backend.app.services.market_scout import market_scout
 from backend.app.services.outcome_pipeline import outcome_pipeline
 
 
 AGENT_CYCLE_ALREADY_RUNNING = "AGENT_CYCLE_ALREADY_RUNNING"
+TERMINAL_EXECUTION_STATUSES = frozenset(
+    {"filled", "canceled", "expired", "rejected"}
+)
 COUNT_FIELDS = (
     "scouted_count",
     "analyzed_count",
@@ -51,6 +56,11 @@ class RouterService(Protocol):
 
 class OutcomesService(Protocol):
     def evaluate_due(self, *, db: Session) -> dict:
+        ...
+
+
+class ExecutionSynchronizer(Protocol):
+    def sync(self, *, db: Session, execution_id: int) -> ExecutedTrade:
         ...
 
 
@@ -90,6 +100,7 @@ class AutonomousAgent:
         pipeline: PipelineService = decision_pipeline,
         router: RouterService = decision_router,
         outcomes: OutcomesService = outcome_pipeline,
+        execution_sync: ExecutionSynchronizer = execution_sync_service,
         config: Settings = settings,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
@@ -97,6 +108,7 @@ class AutonomousAgent:
         self.pipeline = pipeline
         self.router = router
         self.outcomes = outcomes
+        self.execution_sync = execution_sync
         self.config = config
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
@@ -252,6 +264,99 @@ class AutonomousAgent:
                     }
                 )
 
+    @staticmethod
+    def _execution_status(value: object) -> str:
+        return str(getattr(value, "value", value) or "").strip().lower()
+
+    def _sync_execution(
+        self,
+        *,
+        db: Session,
+        execution_id: int,
+        phase: str,
+        summary: dict,
+        errors: list[dict],
+    ) -> dict:
+        previous_status = ""
+        try:
+            execution = db.get(ExecutedTrade, execution_id)
+            previous_status = self._execution_status(
+                execution.status if execution is not None else None
+            )
+            synchronized = self.execution_sync.sync(
+                db=db,
+                execution_id=execution_id,
+            )
+            current_status = self._execution_status(synchronized.status)
+            became_filled = (
+                current_status == "filled" and previous_status != "filled"
+            )
+        except Exception as exc:
+            db.rollback()
+            failure = {
+                "execution_id": execution_id,
+                "previous_status": previous_status,
+                "status": "SYNC_FAILED",
+            }
+            errors.append(
+                {
+                    "phase": phase,
+                    "execution_id": execution_id,
+                    "code": "EXECUTION_SYNC_FAILED",
+                    "error": _safe_error(exc),
+                }
+            )
+            return failure
+
+        summary["executions_synced"] += 1
+        if became_filled:
+            summary["executions_filled"] += 1
+
+        return {
+            "execution_id": synchronized.id,
+            "previous_status": previous_status,
+            "status": current_status,
+            "became_filled": became_filled,
+            "filled_qty": synchronized.filled_qty,
+            "filled_avg_price": synchronized.filled_avg_price,
+        }
+
+    def _reconcile_executions(
+        self,
+        *,
+        db: Session,
+        summary: dict,
+        errors: list[dict],
+    ) -> None:
+        execution_ids = list(
+            db.scalars(
+                select(ExecutedTrade.id)
+                .where(
+                    ExecutedTrade.alpaca_order_id.is_not(None),
+                    ExecutedTrade.alpaca_order_id != "",
+                    func.lower(ExecutedTrade.status).not_in(
+                        TERMINAL_EXECUTION_STATUSES
+                    ),
+                )
+                .order_by(ExecutedTrade.created_at, ExecutedTrade.id)
+            ).all()
+        )
+        reconciliation = {
+            "eligible_count": len(execution_ids),
+            "items": [],
+        }
+        for execution_id in execution_ids:
+            reconciliation["items"].append(
+                self._sync_execution(
+                    db=db,
+                    execution_id=int(execution_id),
+                    phase="EXECUTION_RECONCILIATION",
+                    summary=summary,
+                    errors=errors,
+                )
+            )
+        summary["execution_reconciliation"] = reconciliation
+
     def _current_risk(
         self,
         *,
@@ -312,6 +417,8 @@ class AutonomousAgent:
             "phase": "CLAIMED",
             "mode": mode,
             "execution_enabled_at_start": execution_enabled,
+            "executions_synced": 0,
+            "executions_filled": 0,
             "candidate_ids": [],
             "candidates": [],
         }
@@ -320,6 +427,19 @@ class AutonomousAgent:
         selected_count = 0
 
         try:
+            self._checkpoint(
+                db=db,
+                cycle_id=cycle_id,
+                phase="EXECUTION_RECONCILIATION",
+                counts=counts,
+                summary=summary,
+                errors=errors,
+            )
+            self._reconcile_executions(
+                db=db,
+                summary=summary,
+                errors=errors,
+            )
             self._checkpoint(
                 db=db,
                 cycle_id=cycle_id,
@@ -488,6 +608,18 @@ class AutonomousAgent:
                                 route.get("order_submitted", False)
                             )
                             counts["paper_execution_count"] += 1
+                            if (
+                                item["order_submitted"]
+                                and not route.get("idempotent_replay", False)
+                                and item["executed_trade_id"] is not None
+                            ):
+                                item["immediate_sync"] = self._sync_execution(
+                                    db=db,
+                                    execution_id=int(item["executed_trade_id"]),
+                                    phase="IMMEDIATE_EXECUTION_SYNC",
+                                    summary=summary,
+                                    errors=errors,
+                                )
                         except Exception as exc:
                             db.rollback()
                             counts["failed_count"] += 1

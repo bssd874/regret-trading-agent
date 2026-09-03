@@ -67,6 +67,7 @@ def test_status_and_cycle_endpoints_report_last_cycle(db_session):
         analyzed_count=1,
         rejected_count=1,
         shadow_created_count=1,
+        summary_json='{"executions_synced": 3, "executions_filled": 1}',
     )
     db_session.add(cycle)
     db_session.commit()
@@ -82,6 +83,12 @@ def test_status_and_cycle_endpoints_report_last_cycle(db_session):
     assert body["last_cycle_status"] == "COMPLETED"
     assert body["last_cycle"]["id"] == cycle.id
     assert body["last_cycle_counts"]["scouted"] == 2
+    assert body["executions_synced"] == 3
+    assert body["executions_filled"] == 1
+    assert body["last_cycle_counts"]["executions_synced"] == 3
+    assert body["last_cycle_counts"]["executions_filled"] == 1
+    assert body["last_cycle"]["executions_synced"] == 3
+    assert body["last_cycle"]["executions_filled"] == 1
     assert listing.json()[0]["shadow_created_count"] == 1
     assert detail.json()["id"] == cycle.id
     assert missing.status_code == 404
