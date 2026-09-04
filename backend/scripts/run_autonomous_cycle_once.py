@@ -106,18 +106,21 @@ def run_cycle_once(
     system: the cycle still runs, but only as an OBSERVE-equivalent pass in
     which a genuine ACCEPT is held rather than executed.
     """
+    # Checked before the enable flag: a misconfigured automated environment is
+    # an error worth failing on even when the agent is intentionally paused,
+    # otherwise the run is green and silent either way.
+    misconfigured = automation_database_error(config)
+    if misconfigured:
+        # Never let an automated run persist to an ephemeral SQLite file.
+        print(misconfigured)
+        return 1
+
     if not config.autonomous_agent_enabled:
         print(
             "REGRET autonomous agent is disabled. "
             "No scheduled cycle was run."
         )
         return 0
-
-    misconfigured = automation_database_error(config)
-    if misconfigured:
-        # Never let an automated run persist to an ephemeral SQLite file.
-        print(misconfigured)
-        return 1
 
     try:
         Base.metadata.create_all(bind=engine_bind)

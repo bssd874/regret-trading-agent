@@ -294,3 +294,41 @@ def test_formatted_diagnostic_renders_a_missing_cycle_id_as_none():
 def test_module_exposes_the_documented_automation_variables():
     assert db_diagnostics.AUTOMATION_ENV_VARS == ("GITHUB_ACTIONS", "CI", "VERCEL")
     assert db_diagnostics.DIAGNOSTIC_ONLY_ENV_VAR == "REGRET_DIAGNOSTIC_ONLY"
+
+
+def test_misconfigured_automation_fails_even_when_the_agent_is_paused(
+    monkeypatch,
+    capsys,
+):
+    """A paused agent must not mask a misconfigured automation database."""
+    monkeypatch.setenv("REGRET_REQUIRE_DATABASE_URL", "true")
+    agent = MagicMock()
+    session_factory = MagicMock()
+
+    result = run_cycle_once(
+        config=_settings(autonomous_agent_enabled=False),
+        agent=agent,
+        session_factory=session_factory,
+    )
+
+    assert result == 1
+    assert "refused to run" in capsys.readouterr().out
+    agent.run_cycle.assert_not_called()
+    session_factory.assert_not_called()
+
+
+def test_paused_agent_still_exits_zero_outside_automation(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("VERCEL", raising=False)
+    monkeypatch.delenv("REGRET_REQUIRE_DATABASE_URL", raising=False)
+    agent = MagicMock()
+
+    result = run_cycle_once(
+        config=_settings(autonomous_agent_enabled=False),
+        agent=agent,
+    )
+
+    assert result == 0
+    assert "disabled" in capsys.readouterr().out.lower()
+    agent.run_cycle.assert_not_called()
