@@ -105,6 +105,13 @@ def collect_database_identity(db: Session) -> dict:
     runtime_control_present = inspector.has_table(
         AgentRuntimeControl.__tablename__
     )
+    # A present table with no row is normal: the runtime service creates the
+    # singleton lazily, in the DISARMED state.
+    runtime_control_row_present = False
+    if runtime_control_present:
+        runtime_control_row_present = bool(
+            db.scalar(select(func.count()).select_from(AgentRuntimeControl))
+        )
 
     def _count(model) -> int:
         if not inspector.has_table(model.__tablename__):
@@ -123,6 +130,7 @@ def collect_database_identity(db: Session) -> dict:
         "executed_trade_count": _count(ExecutedTrade),
         "shadow_trade_count": _count(ShadowTrade),
         "runtime_control_present": runtime_control_present,
+        "runtime_control_row_present": runtime_control_row_present,
         "safe_db_fingerprint": safe_db_fingerprint(
             dialect, database_name, database_oid
         ),
@@ -139,7 +147,9 @@ def format_diagnostic(report: dict) -> list[str]:
         f"LATEST_AGENT_CYCLE_ID={latest if latest is not None else 'none'}",
         f"EXECUTED_TRADE_COUNT={report['executed_trade_count']}",
         f"SHADOW_TRADE_COUNT={report['shadow_trade_count']}",
-        "RUNTIME_CONTROL_PRESENT="
+        "RUNTIME_CONTROL_TABLE_PRESENT="
         f"{'true' if report['runtime_control_present'] else 'false'}",
+        "RUNTIME_CONTROL_ROW_PRESENT="
+        f"{'true' if report.get('runtime_control_row_present') else 'false'}",
         f"SAFE_DB_FINGERPRINT={report['safe_db_fingerprint']}",
     ]

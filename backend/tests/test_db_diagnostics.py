@@ -257,7 +257,8 @@ def test_diagnostic_output_contains_no_connection_material(db_session, capsys):
         "LATEST_AGENT_CYCLE_ID",
         "EXECUTED_TRADE_COUNT",
         "SHADOW_TRADE_COUNT",
-        "RUNTIME_CONTROL_PRESENT",
+        "RUNTIME_CONTROL_TABLE_PRESENT",
+        "RUNTIME_CONTROL_ROW_PRESENT",
         "SAFE_DB_FINGERPRINT",
     }
 
@@ -288,7 +289,7 @@ def test_formatted_diagnostic_renders_a_missing_cycle_id_as_none():
         }
     )
     assert "LATEST_AGENT_CYCLE_ID=none" in lines
-    assert "RUNTIME_CONTROL_PRESENT=false" in lines
+    assert "RUNTIME_CONTROL_TABLE_PRESENT=false" in lines
 
 
 def test_module_exposes_the_documented_automation_variables():

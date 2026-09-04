@@ -118,6 +118,45 @@ lives in `frontend/` while the Python application resolves from the repository
 root; two zero-config projects plus an explicit CORS allowlist is the smaller
 and more reliable arrangement.
 
+## Schema bootstrap (run this BEFORE deploying the runtime control)
+
+The API deliberately skips `create_all` on Vercel, and this repository has no
+migration framework. The runtime-control feature adds one new table,
+`agent_runtime_controls`, which therefore will **not** appear on its own.
+
+Until it exists, `GET /api/agent/status` returns 500 — the runtime control
+service issues a SELECT against a missing relation — while `/health` keeps
+returning 200. That endpoint backs the whole dashboard, so provision the table
+first and deploy second, leaving no window:
+
+```bash
+python -m backend.scripts.ensure_runtime_control_schema
+```
+
+Run it locally with the production `DATABASE_URL` injected into the process
+only; never commit it. The script creates exactly one table with
+`checkfirst=True`. It runs no `drop_all`, no `ALTER`, and no other DDL: no
+existing table is recreated, `agent_cycles` and its CHECK constraints are
+untouched, and no row is modified or deleted. A second run prints
+`ALREADY_EXISTS` and changes nothing. In a hosted or automation environment
+with no `DATABASE_URL` it refuses rather than provisioning a throwaway SQLite
+file.
+
+It arms nothing. The table is created empty; the runtime service creates the
+singleton row lazily, always `DISARMED`. Schema creation and runtime arming
+stay separate concerns.
+
+Confirm with the read-only diagnostic, which reports
+`RUNTIME_CONTROL_TABLE_PRESENT` and `RUNTIME_CONTROL_ROW_PRESENT`:
+
+```bash
+python -m backend.scripts.run_autonomous_cycle_once --diagnostic-only
+```
+
+The GitHub Actions one-shot still calls `create_all`, so a scheduled run would
+also create the table — but only against whichever database that job is
+actually configured for, which is why the explicit script is the reliable path.
+
 ## Position-monitoring heartbeat
 
 An open paper position is only safe while something re-evaluates it against its
