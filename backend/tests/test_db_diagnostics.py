@@ -22,8 +22,10 @@ from backend.scripts.run_autonomous_cycle_once import (
 from backend.tests.test_autonomous_agent_service import _settings
 
 
+# Reserved, obviously fake connection material. RFC 2606 reserves
+# ".invalid", so this can never resolve to a real host.
 SECRET_SHAPED = (
-    "postgresql+psycopg://regret_user:sup3r-s3cret@ep-x.aws.neon.tech/regret"
+    "postgresql+psycopg://TEST_USER:TEST_PASSWORD@fake.invalid/test_db"
 )
 
 
@@ -236,9 +238,9 @@ def test_diagnostic_output_contains_no_connection_material(db_session, capsys):
     for forbidden in (
         "postgresql",
         "psycopg",
-        "neon.tech",
-        "sup3r-s3cret",
-        "regret_user",
+        "TEST_USER",
+        "TEST_PASSWORD",
+        "fake.invalid",
         "5432",
         "sslmode",
         "@",
@@ -269,7 +271,7 @@ def test_fingerprint_is_stable_and_derived_only_from_non_secret_identity():
     assert first != other
     assert len(first) == 64
     # The digest is not derived from, and cannot disclose, the credentials.
-    assert "sup3r-s3cret" not in first
+    assert "TEST_PASSWORD" not in first
 
 
 def test_formatted_diagnostic_renders_a_missing_cycle_id_as_none():

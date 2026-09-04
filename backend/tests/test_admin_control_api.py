@@ -27,7 +27,7 @@ from backend.tests.runtime_control_helpers import (
 )
 
 
-ADMIN_SECRET = "test-admin-secret-value"
+ADMIN_SECRET = "TEST_ADMIN_CONTROL_SECRET"
 HEADERS = {"X-Regret-Admin-Secret": ADMIN_SECRET}
 
 
@@ -237,7 +237,7 @@ def test_disarm_is_authenticated_and_idempotent(monkeypatch, db_session):
 def test_admin_and_status_responses_never_leak_secrets(monkeypatch, db_session):
     _arm_ready(monkeypatch)
     monkeypatch.setattr(
-        settings, "regret_github_dispatch_token", "ghp-should-never-appear"
+        settings, "regret_github_dispatch_token", "TEST_DISPATCH_TOKEN_MUST_NOT_APPEAR"
     )
 
     with _client(db_session) as client:
@@ -249,7 +249,7 @@ def test_admin_and_status_responses_never_leak_secrets(monkeypatch, db_session):
 
     blobs = [json.dumps(r.json()) for r in (arm, read, status)]
     for blob in blobs:
-        assert "ghp-should-never-appear" not in blob
+        assert "TEST_DISPATCH_TOKEN_MUST_NOT_APPEAR" not in blob
         assert ADMIN_SECRET not in blob
     # The public status projection also withholds the arm session id.
     assert "arm_session_id" not in status.json()["runtime_control"]
@@ -332,7 +332,7 @@ def test_dispatch_sends_only_the_session_id_and_never_logs_the_token(
         azure_openai_deployment="d",
         nvidia_api_key="k",
         regret_github_repository="example/repo",
-        regret_github_dispatch_token="ghp-secret-token",
+        regret_github_dispatch_token="TEST_GITHUB_DISPATCH_TOKEN",
     )
     service = GitHubDispatchService(config=config)
     post = MagicMock(return_value=MagicMock(status_code=204))
@@ -347,6 +347,6 @@ def test_dispatch_sends_only_the_session_id_and_never_logs_the_token(
     kwargs = post.call_args.kwargs
     assert kwargs["json"]["inputs"] == {"arm_session_id": "session-abc"}
     # The token travels only in the Authorization header.
-    assert "ghp-secret-token" not in json.dumps(kwargs["json"])
-    assert kwargs["headers"]["Authorization"] == "Bearer ghp-secret-token"
-    assert "ghp-secret-token" not in json.dumps(service.target())
+    assert "TEST_GITHUB_DISPATCH_TOKEN" not in json.dumps(kwargs["json"])
+    assert kwargs["headers"]["Authorization"] == "Bearer TEST_GITHUB_DISPATCH_TOKEN"
+    assert "TEST_GITHUB_DISPATCH_TOKEN" not in json.dumps(service.target())

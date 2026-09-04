@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { performOperatorAction } from "../src/lib/operator-server";
 
-const PASSWORD = "operator-password";
-const ADMIN_SECRET = "admin-secret";
+const PASSWORD = "TEST_OPERATOR_PASSWORD";
+const ADMIN_SECRET = "TEST_ADMIN_SECRET";
 const BASE_URL = "https://api.example.invalid";
 
 function configure({
