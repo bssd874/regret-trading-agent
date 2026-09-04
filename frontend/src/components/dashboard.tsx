@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { OperatorControl } from "@/components/operator-control";
+
 import { CounterfactualGraph } from "@/components/counterfactual-graph";
 import { useLanguage } from "@/i18n/language-provider";
 import {
@@ -905,6 +907,7 @@ export function Dashboard() {
   return (
     <main className="mx-auto w-full max-w-[1600px] px-5 pb-5 sm:px-7">
       <DashboardHeader agentStatus={data.agentStatus} backendHealthy={data.health?.status === "ok"} copy={copy} onRefresh={() => void load(true)} refreshing={refreshing} />
+      <OperatorControl onChanged={() => void load(true)} runtimeControl={data.agentStatus?.runtime_control ?? null} />
 
       {partialErrors.length > 0 && (
         <div className="mt-4 flex items-start gap-3 border-l border-[#e9a19a] pl-4 text-xs leading-5 text-[#e9a19a]">

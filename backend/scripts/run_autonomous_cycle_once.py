@@ -1,3 +1,6 @@
+import argparse
+import os
+
 from backend.app import models as _models  # noqa: F401
 from backend.app.core.config import Settings, settings
 from backend.app.db.database import Base, SessionLocal, engine
@@ -6,6 +9,31 @@ from backend.app.services.autonomous_agent_service import (
     AutonomousAgent,
     autonomous_agent,
 )
+from backend.app.services.runtime_control_service import (
+    RuntimeControlService,
+    runtime_control_service,
+)
+
+
+ARM_SESSION_ENV_VAR = "REGRET_ARM_SESSION_ID"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run exactly one REGRET autonomous cycle and exit. "
+            "Optionally claim an operator arm session first."
+        )
+    )
+    parser.add_argument(
+        "--arm-session-id",
+        default=None,
+        help=(
+            "Operator arm session to claim before the cycle. Defaults to the "
+            f"{ARM_SESSION_ENV_VAR} environment variable. Not a credential."
+        ),
+    )
+    return parser
 
 
 def run_cycle_once(
@@ -14,12 +42,19 @@ def run_cycle_once(
     agent: AutonomousAgent = autonomous_agent,
     session_factory=SessionLocal,
     engine_bind=engine,
+    arm_session_id: str | None = None,
+    runtime_control: RuntimeControlService = runtime_control_service,
 ) -> int:
     """Run one scheduled autonomous cycle and exit.
 
     This entrypoint is intended for bounded cron-job invocations. It delegates
     all locking, decision, routing, and execution-safety behavior to the
     existing AutonomousAgent service.
+
+    When an arm session id is supplied, the session is claimed atomically
+    before the cycle runs. A session that cannot be claimed never arms the
+    system: the cycle still runs, but only as an OBSERVE-equivalent pass in
+    which a genuine ACCEPT is held rather than executed.
     """
     if not config.autonomous_agent_enabled:
         print(
@@ -40,6 +75,23 @@ def run_cycle_once(
     db = None
     try:
         db = session_factory()
+
+        session_id = (arm_session_id or "").strip()
+        if session_id:
+            claim = runtime_control.claim_session(db, session_id)
+            if claim.get("claimed"):
+                print(
+                    "Arm session claimed; new paper entries are ARMED "
+                    "for this cycle."
+                )
+            else:
+                # Fail closed: run the cycle without entry permission rather
+                # than arming a session we could not verify.
+                print(
+                    "Arm session was NOT claimed "
+                    f"({claim.get('reason')}); new entries remain disarmed."
+                )
+
         cycle = agent.run_cycle(db=db, trigger="SCHEDULED")
     except AgentCycleAlreadyRunning:
         print(
@@ -64,8 +116,10 @@ def run_cycle_once(
     return 0
 
 
-def main() -> int:
-    return run_cycle_once()
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    arm_session_id = args.arm_session_id or os.getenv(ARM_SESSION_ENV_VAR)
+    return run_cycle_once(arm_session_id=arm_session_id)
 
 
 if __name__ == "__main__":

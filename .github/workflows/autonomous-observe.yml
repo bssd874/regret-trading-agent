@@ -4,6 +4,13 @@ on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      arm_session_id:
+        description: >-
+          Operator arm session to claim before the cycle. Scheduled runs
+          leave this empty and can never arm new entries. Not a secret.
+        required: false
+        default: ""
 
 concurrency:
   group: regret-autonomous-observe
@@ -47,5 +54,9 @@ jobs:
       - name: Install locked dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run exactly one OBSERVE cycle
+      - name: Run exactly one bounded cycle
+        # Passed through the environment, never interpolated into the
+        # shell command, so the input cannot inject script.
+        env:
+          REGRET_ARM_SESSION_ID: ${{ inputs.arm_session_id }}
         run: python -m backend.scripts.run_autonomous_cycle_once

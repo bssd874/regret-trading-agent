@@ -144,3 +144,115 @@ def test_one_shot_observe_configuration_keeps_execution_disabled(monkeypatch):
     assert result == 0
     assert agent.config.paper_execution_enabled is False
     agent.run_cycle.assert_called_once()
+
+
+# ---------------------------------------------------------------
+# Arm session claim (19-20)
+# ---------------------------------------------------------------
+def _claiming_runtime(result):
+    runtime = MagicMock()
+    runtime.claim_session.return_value = result
+    return runtime
+
+
+def test_one_shot_claims_the_arm_session_before_running_the_cycle(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setattr(once_module.Base.metadata, "create_all", MagicMock())
+    agent = MagicMock()
+    agent.run_cycle.return_value = SimpleNamespace(id=41, status="COMPLETED")
+    session = MagicMock()
+    runtime = _claiming_runtime({"claimed": True})
+
+    result = run_cycle_once(
+        config=_settings(
+            autonomous_agent_enabled=True,
+            paper_execution_enabled=True,
+        ),
+        agent=agent,
+        session_factory=MagicMock(return_value=session),
+        arm_session_id="session-xyz",
+        runtime_control=runtime,
+    )
+
+    assert result == 0
+    runtime.claim_session.assert_called_once_with(session, "session-xyz")
+    agent.run_cycle.assert_called_once_with(db=session, trigger="SCHEDULED")
+    assert "ARMED" in capsys.readouterr().out
+
+
+def test_unclaimable_session_still_runs_the_cycle_without_arming(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setattr(once_module.Base.metadata, "create_all", MagicMock())
+    agent = MagicMock()
+    agent.run_cycle.return_value = SimpleNamespace(id=42, status="COMPLETED")
+    session = MagicMock()
+    runtime = _claiming_runtime(
+        {"claimed": False, "reason": "SESSION_MISMATCH"}
+    )
+
+    result = run_cycle_once(
+        config=_settings(
+            autonomous_agent_enabled=True,
+            paper_execution_enabled=True,
+        ),
+        agent=agent,
+        session_factory=MagicMock(return_value=session),
+        arm_session_id="wrong-session",
+        runtime_control=runtime,
+    )
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "NOT claimed" in output
+    assert "SESSION_MISMATCH" in output
+    # The cycle still runs; it simply has no entry permission.
+    agent.run_cycle.assert_called_once_with(db=session, trigger="SCHEDULED")
+
+
+def test_scheduled_run_without_a_session_never_claims_or_arms(monkeypatch):
+    monkeypatch.setattr(once_module.Base.metadata, "create_all", MagicMock())
+    agent = MagicMock()
+    agent.run_cycle.return_value = SimpleNamespace(id=43, status="COMPLETED")
+    runtime = MagicMock()
+
+    result = run_cycle_once(
+        config=_settings(
+            autonomous_agent_enabled=True,
+            paper_execution_enabled=True,
+        ),
+        agent=agent,
+        session_factory=MagicMock(return_value=MagicMock()),
+        arm_session_id=None,
+        runtime_control=runtime,
+    )
+
+    assert result == 0
+    runtime.claim_session.assert_not_called()
+    agent.run_cycle.assert_called_once()
+
+
+def test_cli_reads_the_arm_session_from_argument_or_environment(monkeypatch):
+    parser = once_module.build_parser()
+    assert parser.parse_args([]).arm_session_id is None
+    assert parser.parse_args(
+        ["--arm-session-id", "from-cli"]
+    ).arm_session_id == "from-cli"
+
+    captured = {}
+
+    def fake_run(*, arm_session_id=None):
+        captured["arm_session_id"] = arm_session_id
+        return 0
+
+    monkeypatch.setattr(once_module, "run_cycle_once", fake_run)
+    monkeypatch.setenv(once_module.ARM_SESSION_ENV_VAR, "from-env")
+
+    assert once_module.main([]) == 0
+    assert captured["arm_session_id"] == "from-env"
+
+    assert once_module.main(["--arm-session-id", "from-cli"]) == 0
+    assert captured["arm_session_id"] == "from-cli"

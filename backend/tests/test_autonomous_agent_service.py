@@ -32,6 +32,7 @@ from backend.tests.test_decision_pipeline import (
     StubCritic,
     build_pipeline,
 )
+from backend.tests.runtime_control_helpers import armed_service
 from backend.tests.test_decision_router import _create_routing_chain
 from backend.tests.test_outcome_pipeline import FakeMarketData, NOW, _executed, _shadow
 
@@ -152,6 +153,7 @@ def _agent(
     exit_sync=None,
     config=None,
     now_provider=None,
+    runtime_control=None,
 ):
     return AutonomousAgent(
         scout=FakeScout(symbols),
@@ -161,6 +163,7 @@ def _agent(
         **({"execution_sync": execution_sync} if execution_sync else {}),
         exit_manager=exit_manager or HoldExitManager(),
         **({"exit_sync": exit_sync} if exit_sync else {}),
+        **({"runtime_control": runtime_control} if runtime_control else {}),
         config=config or _settings(),
         now_provider=now_provider,
     )
@@ -263,10 +266,12 @@ def test_accept_execution_on_routes_current_cycle_through_existing_router(
         filled_avg_price="101.25",
     )
 
+    config = _settings(paper_execution_enabled=True)
     cycle = _agent(
         router=decision_router,
         execution_sync=ExecutionSyncService(provider),
-        config=_settings(paper_execution_enabled=True),
+        config=config,
+        runtime_control=armed_service(db_session, config),
     ).run_cycle(db=db_session)
     execution = db_session.scalar(select(ExecutedTrade))
     summary = json.loads(cycle.summary_json)

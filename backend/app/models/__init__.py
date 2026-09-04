@@ -1,4 +1,5 @@
 from backend.app.models.agent_cycle import AgentCycle
+from backend.app.models.agent_runtime_control import AgentRuntimeControl
 from backend.app.models.candidate_trade import CandidateTrade
 from backend.app.models.critic_analysis import CriticAnalysis
 from backend.app.models.decision_analysis import DecisionAnalysis
@@ -12,6 +13,7 @@ from backend.app.models.trade_exit import TradeExit
 
 __all__ = [
     "AgentCycle",
+    "AgentRuntimeControl",
     "CandidateTrade",
     "CriticAnalysis",
     "DecisionAnalysis",

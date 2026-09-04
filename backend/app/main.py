@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.app.api.admin_routes import router as admin_router
 from backend.app.api.agent_routes import router as agent_router
 from backend.app.api.routes import router
 from backend.app.core.config import settings
@@ -53,11 +54,17 @@ app.add_middleware(
 
 PUBLIC_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
+# Operator control is a separate, independently authenticated surface. It
+# must keep working while every other public mutation stays blocked, so it
+# is exempt from the public write gate — never from its own admin secret.
+ADMIN_API_PREFIX = "/api/admin/"
+
 
 @app.middleware("http")
 async def protect_public_write_api(request: Request, call_next):
     if (
         request.url.path.startswith("/api/")
+        and not request.url.path.startswith(ADMIN_API_PREFIX)
         and request.method.upper() in PUBLIC_WRITE_METHODS
         and not settings.public_write_api_enabled
     ):
@@ -90,5 +97,11 @@ app.include_router(
 
 app.include_router(
     agent_router,
+    prefix="/api",
+)
+
+
+app.include_router(
+    admin_router,
     prefix="/api",
 )

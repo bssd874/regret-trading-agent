@@ -23,6 +23,8 @@ export type Health = {
   paper_trading: boolean;
 };
 
+import type { EntryExecutionState, RuntimeControl } from "@/lib/operator";
+
 export type AgentStatus = {
   enabled: boolean;
   mode: "OBSERVE" | "AUTONOMOUS_PAPER";
@@ -35,6 +37,8 @@ export type AgentStatus = {
   last_cycle_status: string | null;
   last_cycle_started_at: string | null;
   last_cycle_finished_at: string | null;
+  runtime_control: RuntimeControl | null;
+  entry_execution_state: EntryExecutionState | null;
 };
 
 export type Candidate = {

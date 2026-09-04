@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from backend.app.core.config import settings
 from backend.app.db.database import get_db
 from backend.app.models.agent_cycle import AgentCycle
+from backend.app.services.runtime_control_service import (
+    runtime_control_service,
+)
 from backend.app.services.autonomous_agent_service import (
     AgentCycleAlreadyRunning,
     autonomous_agent,
@@ -68,6 +71,8 @@ def get_agent_status(db: Session = Depends(get_db)):
         .limit(1)
     )
     payload = agent_cycle_payload(last_cycle) if last_cycle is not None else None
+    # Read-only projection; the arm session id is intentionally omitted.
+    runtime_control = runtime_control_service.snapshot(db)
     counts = (
         {
             "scouted": last_cycle.scouted_count,
@@ -102,6 +107,8 @@ def get_agent_status(db: Session = Depends(get_db)):
         "paper": True,
         "paper_execution_enabled": settings.paper_execution_enabled,
         "new_entries_enabled": settings.autonomous_new_entries_enabled,
+        "runtime_control": runtime_control,
+        "entry_execution_state": runtime_control["entry_execution_state"],
         "running": running is not None,
         "last_cycle": payload,
         "last_cycle_status": last_cycle.status if last_cycle else None,

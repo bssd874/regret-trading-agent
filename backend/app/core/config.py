@@ -128,6 +128,48 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # Operator runtime control (second safety layer)
+    # =========================================================
+    # Server-side shared secret for the isolated admin control routes. When
+    # unset, every admin mutation is disabled: the control plane fails closed.
+    admin_control_secret: str | None = None
+
+    # A START_REQUESTED arm expires if the dispatched workflow never claims it.
+    runtime_start_request_ttl_minutes: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+    )
+
+    # An ARMED session stops permitting new entries once this window elapses.
+    runtime_arm_ttl_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=240,
+    )
+
+    # New paper entries allowed per arm session before automatic disarm.
+    runtime_max_new_executions: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+    )
+
+    # =========================================================
+    # GitHub Actions dispatch (server-side only)
+    # =========================================================
+    regret_github_repository: str | None = None
+    regret_github_workflow: str = "autonomous-observe.yml"
+    regret_github_ref: str = "main"
+    regret_github_dispatch_token: str | None = None
+    regret_github_api_base_url: str = "https://api.github.com"
+    regret_github_dispatch_timeout_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        le=120,
+    )
+
+    # =========================================================
     # Database
     # =========================================================
     database_url: str = "sqlite:///./regret.db"

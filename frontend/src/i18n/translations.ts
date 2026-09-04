@@ -128,6 +128,42 @@ export type Translation = {
     concerns: string;
     riskSummary: string;
   };
+  operator: {
+    title: string;
+    disarmed: string;
+    newEntriesBlocked: string;
+    newEntriesDisarmed: string;
+    starting: string;
+    waitingForCycle: string;
+    armed: string;
+    analysisEnabled: string;
+    armAction: string;
+    disarmAction: string;
+    remaining: string;
+    budget: string;
+    budgetUsed: string;
+    positionMonitorActive: string;
+    openPositionMonitorRemains: string;
+    masterDisabled: string;
+    dispatchUnavailable: string;
+    modalTitle: string;
+    modalBody: string;
+    limitPaperOnly: string;
+    limitOneExecution: string;
+    limitArmWindow: string;
+    limitCritic: string;
+    limitRiskGate: string;
+    limitExitSafety: string;
+    passwordLabel: string;
+    passwordPlaceholder: string;
+    cancel: string;
+    confirm: string;
+    working: string;
+    errorPassword: string;
+    errorConflict: string;
+    errorUnavailable: string;
+    errorGeneric: string;
+  };
   states: {
     partialData: string;
     backendOffline: string;
@@ -267,6 +303,43 @@ export const translations: Record<Language, Translation> = {
       concerns: "Concerns",
       riskSummary: "Risk Gate",
     },
+    operator: {
+      title: "Operator control",
+      disarmed: "Agent disarmed",
+      newEntriesBlocked: "New entries blocked",
+      newEntriesDisarmed: "New entries disarmed",
+      starting: "Agent starting...",
+      waitingForCycle: "Waiting for autonomous cycle",
+      armed: "Agent armed · Paper autonomous",
+      analysisEnabled: "Autonomous market analysis enabled",
+      armAction: "Arm & start paper agent",
+      disarmAction: "Disarm new entries",
+      remaining: "remaining",
+      budget: "Execution budget",
+      budgetUsed: "used",
+      positionMonitorActive: "Position safety monitor active",
+      openPositionMonitorRemains: "Open position safety monitor remains active",
+      masterDisabled: "Paper execution capability is disabled for this deployment",
+      dispatchUnavailable: "Operator dispatch is not configured",
+      modalTitle: "Arm & start autonomous paper agent?",
+      modalBody:
+        "REGRET will immediately start one autonomous market-analysis cycle. If a genuine current-cycle ACCEPT passes the deterministic Risk Gate, REGRET may submit ONE Alpaca PAPER BUY.",
+      limitPaperOnly: "Alpaca PAPER only",
+      limitOneExecution: "1 new execution maximum",
+      limitArmWindow: "15 minute arm window",
+      limitCritic: "Critic remains mandatory",
+      limitRiskGate: "Risk Gate unchanged",
+      limitExitSafety: "Existing exit safety remains active after disarm",
+      passwordLabel: "Operator password",
+      passwordPlaceholder: "Enter operator password",
+      cancel: "Cancel",
+      confirm: "Arm & start",
+      working: "Working...",
+      errorPassword: "Operator password rejected.",
+      errorConflict: "An arm session is already active.",
+      errorUnavailable: "Operator control is unavailable in this deployment.",
+      errorGeneric: "The operator action could not be completed.",
+    },
     states: {
       partialData: "Partial data could not be loaded. Available sections remain live.",
       backendOffline: "Backend offline",
@@ -403,6 +476,43 @@ export const translations: Record<Language, Translation> = {
       consistency: "Konsistensi",
       concerns: "Kekhawatiran",
       riskSummary: "Risk Gate",
+    },
+    operator: {
+      title: "Kontrol operator",
+      disarmed: "Entry baru dinonaktifkan",
+      newEntriesBlocked: "Entry baru diblokir",
+      newEntriesDisarmed: "Entry baru dinonaktifkan",
+      starting: "Agent sedang dimulai...",
+      waitingForCycle: "Menunggu siklus otonom",
+      armed: "Agent aktif · Paper otonom",
+      analysisEnabled: "Analisis pasar otonom diaktifkan",
+      armAction: "Aktifkan & jalankan agent paper",
+      disarmAction: "Nonaktifkan entry baru",
+      remaining: "tersisa",
+      budget: "Kuota eksekusi",
+      budgetUsed: "terpakai",
+      positionMonitorActive: "Pemantauan keamanan posisi aktif",
+      openPositionMonitorRemains: "Pemantauan posisi terbuka tetap aktif",
+      masterDisabled: "Kapabilitas eksekusi paper dinonaktifkan untuk deployment ini",
+      dispatchUnavailable: "Dispatch operator belum dikonfigurasi",
+      modalTitle: "Aktifkan & jalankan agent paper otonom?",
+      modalBody:
+        "REGRET akan langsung menjalankan satu siklus analisis pasar otonom. Jika ACCEPT asli pada siklus berjalan lolos Risk Gate deterministik, REGRET dapat mengirim SATU BUY Alpaca PAPER.",
+      limitPaperOnly: "Hanya Alpaca PAPER",
+      limitOneExecution: "Maksimum 1 eksekusi baru",
+      limitArmWindow: "Jendela aktif 15 menit",
+      limitCritic: "Critic tetap wajib",
+      limitRiskGate: "Risk Gate tidak berubah",
+      limitExitSafety: "Keamanan exit yang ada tetap aktif setelah dinonaktifkan",
+      passwordLabel: "Kata sandi operator",
+      passwordPlaceholder: "Masukkan kata sandi operator",
+      cancel: "Batal",
+      confirm: "Aktifkan & jalankan",
+      working: "Memproses...",
+      errorPassword: "Kata sandi operator ditolak.",
+      errorConflict: "Sesi aktivasi sudah berjalan.",
+      errorUnavailable: "Kontrol operator tidak tersedia pada deployment ini.",
+      errorGeneric: "Aksi operator tidak dapat diselesaikan.",
     },
     states: {
       partialData: "Sebagian data tidak dapat dimuat. Bagian yang tersedia tetap aktif.",

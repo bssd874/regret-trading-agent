@@ -21,6 +21,11 @@ from backend.app.services.execution_sync_service import execution_sync_service
 from backend.app.services.market_scout import market_scout
 from backend.app.services.outcome_pipeline import outcome_pipeline
 from backend.app.services.position_exit_service import position_exit_service
+from backend.app.services.runtime_control_service import (
+    HOLD_REASON_RUNTIME_DISARMED,
+    RuntimeControlService,
+    runtime_control_service,
+)
 from backend.app.services.trade_exit_sync_service import trade_exit_sync_service
 
 
@@ -119,6 +124,7 @@ class AutonomousAgent:
         execution_sync: ExecutionSynchronizer = execution_sync_service,
         exit_manager: PositionExitManager = position_exit_service,
         exit_sync: TradeExitSynchronizer = trade_exit_sync_service,
+        runtime_control: RuntimeControlService = runtime_control_service,
         config: Settings = settings,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
@@ -129,6 +135,7 @@ class AutonomousAgent:
         self.execution_sync = execution_sync
         self.exit_manager = exit_manager
         self.exit_sync = exit_sync
+        self.runtime_control = runtime_control
         self.config = config
         self.now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
@@ -587,6 +594,8 @@ class AutonomousAgent:
             self.config.autonomous_new_entries_enabled
         )
         mode = self.mode(execution_enabled=execution_enabled)
+        runtime_audit = self.runtime_control.cycle_audit(db)
+        entry_armed = bool(runtime_audit.get("effective_armed", False))
         cycle = self._claim_cycle(db=db, trigger=trigger, mode=mode)
         cycle_id = cycle.id
         cycle_started_at = cycle.started_at
@@ -596,6 +605,8 @@ class AutonomousAgent:
             "mode": mode,
             "execution_enabled_at_start": execution_enabled,
             "new_entries_enabled_at_start": new_entries_enabled,
+            "runtime_control_at_start": runtime_audit,
+            "runtime_entry_armed_at_start": entry_armed,
             "executions_synced": 0,
             "executions_filled": 0,
             "open_positions_checked": 0,
@@ -816,6 +827,17 @@ class AutonomousAgent:
                                 "reason": "PAPER_EXECUTION_DISABLED",
                             }
                         )
+                    elif not entry_armed:
+                        # The operator has not armed a new entry, or the arm
+                        # expired or already spent its budget. This is a hold,
+                        # not a REJECT: the decision was a genuine ACCEPT.
+                        counts["execution_held_count"] += 1
+                        item.update(
+                            {
+                                "action": "EXECUTION_HELD",
+                                "reason": HOLD_REASON_RUNTIME_DISARMED,
+                            }
+                        )
                     else:
                         try:
                             route = self.router.route(db=db, decision_id=risk.id)
@@ -827,6 +849,21 @@ class AutonomousAgent:
                                 route.get("order_submitted", False)
                             )
                             counts["paper_execution_count"] += 1
+                            if (
+                                item["order_submitted"]
+                                and not route.get("idempotent_replay", False)
+                            ):
+                                item["runtime_control_after"] = (
+                                    self.runtime_control.consume_execution(
+                                        db,
+                                        cycle_id=cycle_id,
+                                    )
+                                )
+                                # One arm session buys once; any further
+                                # candidate in this cycle is held.
+                                entry_armed = (
+                                    self.runtime_control.is_entry_armed(db)
+                                )
                             if (
                                 item["order_submitted"]
                                 and not route.get("idempotent_replay", False)
