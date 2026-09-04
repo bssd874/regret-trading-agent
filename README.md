@@ -235,36 +235,39 @@ The TSLA paper position was subsequently closed by the autonomous `TIME_EXIT` pa
 
 ## Public deployment
 
-The first-stage public demo architecture is Vercel (read-only Next.js terminal),
-a Back4App FastAPI container, and Neon PostgreSQL. Alpaca remains PAPER-only;
-Azure OpenAI, NVIDIA, Alpaca, and database credentials remain server-side.
+The public demo architecture is Vercel (read-only Next.js terminal), a
+Northflank FastAPI service, Northflank PostgreSQL, and a separate Northflank
+scheduled job. Alpaca remains PAPER-only; Azure OpenAI, NVIDIA, Alpaca, and
+database credentials remain server-side.
 
-The public API container does not run the autonomous worker, so its truthful
-hosted status is **AGENT OFFLINE**:
+The scheduled job invokes exactly one existing autonomous cycle every 15
+minutes and exits. It runs in **OBSERVE** mode, so the terminal truthfully shows
+**AGENT ACTIVE · OBSERVE** while paper execution remains disabled:
 
 ```dotenv
 ALPACA_PAPER=true
-AUTONOMOUS_AGENT_ENABLED=false
-AUTONOMOUS_NEW_ENTRIES_ENABLED=false
+AUTONOMOUS_AGENT_ENABLED=true
+AUTONOMOUS_NEW_ENTRIES_ENABLED=true
 PAPER_EXECUTION_ENABLED=false
 PUBLIC_AGENT_TRIGGER_ENABLED=false
 PUBLIC_WRITE_API_ENABLED=false
-AUTONOMOUS_CYCLE_SECONDS=300
-AUTONOMOUS_STALE_CYCLE_SECONDS=900
+AUTONOMOUS_CYCLE_SECONDS=900
+AUTONOMOUS_STALE_CYCLE_SECONDS=1800
 ```
 
-No recurring cycle or new entry runs in the API container, and no new Alpaca
-PAPER order can be submitted. The public dashboard still shows the verified
-persisted BUY → `TIME_EXIT` → SELL lifecycle, realized P&L, and counterfactual
-examples without asking a judge to trade. Live-money trading is not supported.
+The API process itself never starts an agent loop. The scheduled job calls the
+Python service directly, never the public run-once endpoint. A genuine current
+cycle `ACCEPT` is recorded as `EXECUTION_HELD`; no new Alpaca PAPER order can be
+submitted. The dashboard still shows the verified persisted BUY → `TIME_EXIT`
+→ SELL lifecycle, realized P&L, and counterfactual examples without asking a
+judge to trade. Live-money trading is not supported.
 
 All HTTP mutation/development routes are also disabled in the hosted demo by
 `PUBLIC_WRITE_API_ENABLED=false`. Manual run-once remains independently
-protected by `PUBLIC_AGENT_TRIGGER_ENABLED=false`. A continuously running
-autonomous worker is intentionally not hosted in this first stage.
+protected by `PUBLIC_AGENT_TRIGGER_ENABLED=false`. No infinite worker is hosted.
 
 Deployment commands, PostgreSQL initialization, explicit demo-data migration,
-CORS setup, Vercel/Back4App/Neon configuration, validation, and the public API audit
+CORS setup, Vercel/Northflank configuration, validation, and the public API audit
 are documented in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Day 03 decision dashboard and replay

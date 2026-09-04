@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/__init__.py ./backend/
 COPY backend/app ./backend/app
+COPY backend/scripts ./backend/scripts
 
 RUN chown -R app:app /app
 USER app

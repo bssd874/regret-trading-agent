@@ -20,6 +20,7 @@ def test_autonomous_agent_sources_contain_no_order_mutation_calls():
         backend / "app" / "services" / "position_exit_service.py",
         backend / "app" / "services" / "trade_exit_sync_service.py",
         backend / "scripts" / "run_autonomous_agent.py",
+        backend / "scripts" / "run_autonomous_cycle_once.py",
     )
     for source_path in sources:
         source = source_path.read_text(encoding="utf-8")
