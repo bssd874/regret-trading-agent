@@ -583,18 +583,379 @@ class AutonomousAgent:
         db.refresh(cycle)
         return cycle
 
+    def _run_lifecycle_phase(
+        self,
+        *,
+        db: Session,
+        cycle_id: int,
+        counts: dict,
+        summary: dict,
+        errors: list[dict],
+    ) -> None:
+        """Keep existing trading state safe.
+
+        Reconcile pending BUY and SELL orders, monitor filled positions for
+        TAKE_PROFIT / STOP_LOSS / TIME_EXIT, and evaluate outcomes that are
+        already due. This phase touches no market scout, no analyst and no
+        critic, so it is safe to run on a frequent heartbeat.
+        """
+        self._checkpoint(
+            db=db,
+            cycle_id=cycle_id,
+            phase="EXECUTION_RECONCILIATION",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        self._reconcile_executions(
+            db=db,
+            summary=summary,
+            errors=errors,
+        )
+        self._checkpoint(
+            db=db,
+            cycle_id=cycle_id,
+            phase="EXIT_RECONCILIATION",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        self._reconcile_trade_exits(
+            db=db,
+            summary=summary,
+            errors=errors,
+        )
+        self._checkpoint(
+            db=db,
+            cycle_id=cycle_id,
+            phase="POSITION_MONITORING",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        self._monitor_open_positions(
+            db=db,
+            summary=summary,
+            errors=errors,
+        )
+        self._checkpoint(
+            db=db,
+            cycle_id=cycle_id,
+            phase="OUTCOMES_BEFORE",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        self._evaluate_outcomes(
+            db=db,
+            phase="OUTCOMES_BEFORE",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+
+    def _run_entry_phase(
+        self,
+        *,
+        db: Session,
+        cycle_id: int,
+        cycle_started_at: datetime,
+        execution_enabled: bool,
+        entry_armed: bool,
+        new_entries_enabled: bool,
+        counts: dict,
+        summary: dict,
+        errors: list[dict],
+    ) -> dict:
+        """Discover and decide on new candidates.
+
+        This is the expensive half: market scout, analyst, adversarial
+        critic and the deterministic risk gate. It runs only when new
+        entries are actually authorised.
+        """
+        fatal_failure = False
+        selected_count = 0
+        self._checkpoint(
+            db=db,
+            cycle_id=cycle_id,
+            phase="SCOUTING",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        if new_entries_enabled:
+            try:
+                scouted = list(
+                    self.scout.run(
+                        db=db,
+                        limit=self.config.autonomous_max_candidates_per_cycle,
+                    )
+                )
+            except Exception as exc:
+                db.rollback()
+                errors.append(
+                    {
+                        "phase": "SCOUT",
+                        "code": "SCOUT_FAILED",
+                        "error": _safe_error(exc),
+                    }
+                )
+                scouted = []
+                fatal_failure = True
+        else:
+            scouted = []
+
+        selected = scouted[: self.config.autonomous_max_candidates_per_cycle]
+        candidate_ids = [int(candidate.id) for candidate in selected]
+        selected_count = len(candidate_ids)
+        counts["scouted_count"] = len(scouted)
+        summary["candidate_ids"] = candidate_ids
+        summary["scout"] = {
+            "status": "ENABLED" if new_entries_enabled else "SKIPPED",
+            "reason": (
+                None
+                if new_entries_enabled
+                else "AUTONOMOUS_NEW_ENTRIES_DISABLED"
+            ),
+            "returned_count": len(scouted),
+            "selected_count": selected_count,
+            "limit": self.config.autonomous_max_candidates_per_cycle,
+        }
+
+        for candidate_id in candidate_ids:
+            candidate = db.get(CandidateTrade, candidate_id)
+            item: dict = {"candidate_id": candidate_id}
+            if candidate is not None:
+                item["symbol"] = candidate.symbol
+
+            previous_risk_id = db.scalar(
+                select(RiskDecision.id).where(
+                    RiskDecision.candidate_id == candidate_id
+                )
+            )
+
+            try:
+                self.pipeline.run(db=db, candidate_id=candidate_id)
+                risk = self._current_risk(
+                    db=db,
+                    candidate_id=candidate_id,
+                    cycle_started_at=cycle_started_at,
+                    previous_risk_id=previous_risk_id,
+                )
+            except Exception as exc:
+                db.rollback()
+                candidate = db.get(CandidateTrade, candidate_id)
+                failure_code = (
+                    candidate.status
+                    if candidate is not None
+                    and candidate.status
+                    in {"ANALYSIS_FAILED", "CRITIC_FAILED", "RISK_FAILED"}
+                    else "CANDIDATE_PIPELINE_FAILED"
+                )
+                counts["failed_count"] += 1
+                item.update(
+                    {
+                        "status": "FAILED",
+                        "action": "NOT_ROUTED",
+                        "failure_code": failure_code,
+                    }
+                )
+                errors.append(
+                    {
+                        "phase": "DECISION_PIPELINE",
+                        "candidate_id": candidate_id,
+                        "code": failure_code,
+                        "error": _safe_error(exc),
+                    }
+                )
+                summary["candidates"].append(item)
+                self._checkpoint(
+                    db=db,
+                    cycle_id=cycle_id,
+                    phase="CANDIDATE_FAILED",
+                    counts=counts,
+                    summary=summary,
+                    errors=errors,
+                )
+                continue
+
+            counts["analyzed_count"] += 1
+            item.update(
+                {
+                    "status": "DECIDED",
+                    "risk_decision_id": risk.id,
+                    "risk_decision": risk.decision,
+                }
+            )
+
+            decision = str(risk.decision).strip().upper()
+            if decision == "REJECT":
+                counts["rejected_count"] += 1
+                try:
+                    route = self.router.route(db=db, decision_id=risk.id)
+                    item["action"] = "SHADOW_ROUTE"
+                    item["shadow_trade_id"] = route.get("shadow_trade_id")
+                    if not route.get("idempotent_replay", False):
+                        counts["shadow_created_count"] += 1
+                except Exception as exc:
+                    db.rollback()
+                    counts["failed_count"] += 1
+                    item.update(
+                        {
+                            "status": "FAILED",
+                            "action": "ROUTING_FAILED",
+                        }
+                    )
+                    errors.append(
+                        {
+                            "phase": "DECISION_ROUTER",
+                            "candidate_id": candidate_id,
+                            "risk_decision_id": risk.id,
+                            "code": "REJECT_ROUTING_FAILED",
+                            "error": _safe_error(exc),
+                        }
+                    )
+            elif decision == "ACCEPT":
+                counts["accepted_count"] += 1
+                if not execution_enabled:
+                    counts["execution_held_count"] += 1
+                    item.update(
+                        {
+                            "action": "EXECUTION_HELD",
+                            "reason": "PAPER_EXECUTION_DISABLED",
+                        }
+                    )
+                elif not entry_armed:
+                    # The operator has not armed a new entry, or the arm
+                    # expired or already spent its budget. This is a hold,
+                    # not a REJECT: the decision was a genuine ACCEPT.
+                    counts["execution_held_count"] += 1
+                    item.update(
+                        {
+                            "action": "EXECUTION_HELD",
+                            "reason": HOLD_REASON_RUNTIME_DISARMED,
+                        }
+                    )
+                else:
+                    try:
+                        route = self.router.route(db=db, decision_id=risk.id)
+                        item["action"] = "PAPER_EXECUTION"
+                        item["executed_trade_id"] = route.get(
+                            "executed_trade_id"
+                        )
+                        item["order_submitted"] = bool(
+                            route.get("order_submitted", False)
+                        )
+                        counts["paper_execution_count"] += 1
+                        if (
+                            item["order_submitted"]
+                            and not route.get("idempotent_replay", False)
+                        ):
+                            item["runtime_control_after"] = (
+                                self.runtime_control.consume_execution(
+                                    db,
+                                    cycle_id=cycle_id,
+                                )
+                            )
+                            # One arm session buys once; any further
+                            # candidate in this cycle is held.
+                            entry_armed = (
+                                self.runtime_control.is_entry_armed(db)
+                            )
+                        if (
+                            item["order_submitted"]
+                            and not route.get("idempotent_replay", False)
+                            and item["executed_trade_id"] is not None
+                        ):
+                            item["immediate_sync"] = self._sync_execution(
+                                db=db,
+                                execution_id=int(item["executed_trade_id"]),
+                                phase="IMMEDIATE_EXECUTION_SYNC",
+                                summary=summary,
+                                errors=errors,
+                            )
+                    except Exception as exc:
+                        db.rollback()
+                        counts["failed_count"] += 1
+                        item.update(
+                            {
+                                "status": "FAILED",
+                                "action": "ROUTING_FAILED",
+                            }
+                        )
+                        errors.append(
+                            {
+                                "phase": "DECISION_ROUTER",
+                                "candidate_id": candidate_id,
+                                "risk_decision_id": risk.id,
+                                "code": "ACCEPT_ROUTING_FAILED",
+                                "error": _safe_error(exc),
+                            }
+                        )
+            else:
+                counts["failed_count"] += 1
+                item.update(
+                    {
+                        "status": "FAILED",
+                        "action": "NOT_ROUTED",
+                    }
+                )
+                errors.append(
+                    {
+                        "phase": "RISK_DECISION",
+                        "candidate_id": candidate_id,
+                        "risk_decision_id": risk.id,
+                        "code": "INVALID_RISK_DECISION",
+                    }
+                )
+
+            summary["candidates"].append(item)
+            self._checkpoint(
+                db=db,
+                cycle_id=cycle_id,
+                phase="CANDIDATE_COMPLETE",
+                counts=counts,
+                summary=summary,
+                errors=errors,
+            )
+
+        self._checkpoint(
+            db=db,
+            cycle_id=cycle_id,
+            phase="OUTCOMES_AFTER",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        self._evaluate_outcomes(
+            db=db,
+            phase="OUTCOMES_AFTER",
+            counts=counts,
+            summary=summary,
+            errors=errors,
+        )
+        return {
+            "fatal_failure": fatal_failure,
+            "selected_count": selected_count,
+        }
+
     def run_cycle(
         self,
         *,
         db: Session,
         trigger: str = "SCHEDULED",
         trigger_source: str | None = None,
+        lifecycle_only: bool = False,
     ) -> AgentCycle:
         """Run one bounded cycle.
 
         `trigger` stays within the persisted CHECK constraint. `trigger_source`
-        is a free-form audit label recorded in the summary, so a heartbeat can
-        be told apart from a cron run without a schema migration.
+        and `cycle_mode` are free-form audit labels recorded in the summary, so
+        a heartbeat can be told apart from a cron run without a migration.
+
+        `lifecycle_only` runs the safety half alone: reconciliation, exits and
+        due outcomes. It never scouts, analyses or critiques, so a frequent
+        heartbeat costs no provider quota while no new entry is authorised.
         """
         execution_enabled = bool(self.config.paper_execution_enabled)
         new_entries_enabled = bool(
@@ -603,6 +964,8 @@ class AutonomousAgent:
         mode = self.mode(execution_enabled=execution_enabled)
         runtime_audit = self.runtime_control.cycle_audit(db)
         entry_armed = bool(runtime_audit.get("effective_armed", False))
+        cycle_mode = "LIFECYCLE_ONLY" if lifecycle_only else "FULL_CYCLE"
+        # The same persistent lock guards both modes.
         cycle = self._claim_cycle(db=db, trigger=trigger, mode=mode)
         cycle_id = cycle.id
         cycle_started_at = cycle.started_at
@@ -614,6 +977,7 @@ class AutonomousAgent:
             "new_entries_enabled_at_start": new_entries_enabled,
             "runtime_control_at_start": runtime_audit,
             "runtime_entry_armed_at_start": entry_armed,
+            "cycle_mode": cycle_mode,
             "executions_synced": 0,
             "executions_filled": 0,
             "open_positions_checked": 0,
@@ -631,320 +995,40 @@ class AutonomousAgent:
         selected_count = 0
 
         try:
-            self._checkpoint(
+            self._run_lifecycle_phase(
                 db=db,
                 cycle_id=cycle_id,
-                phase="EXECUTION_RECONCILIATION",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
-            self._reconcile_executions(
-                db=db,
-                summary=summary,
-                errors=errors,
-            )
-            self._checkpoint(
-                db=db,
-                cycle_id=cycle_id,
-                phase="EXIT_RECONCILIATION",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
-            self._reconcile_trade_exits(
-                db=db,
-                summary=summary,
-                errors=errors,
-            )
-            self._checkpoint(
-                db=db,
-                cycle_id=cycle_id,
-                phase="POSITION_MONITORING",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
-            self._monitor_open_positions(
-                db=db,
-                summary=summary,
-                errors=errors,
-            )
-            self._checkpoint(
-                db=db,
-                cycle_id=cycle_id,
-                phase="OUTCOMES_BEFORE",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
-            self._evaluate_outcomes(
-                db=db,
-                phase="OUTCOMES_BEFORE",
                 counts=counts,
                 summary=summary,
                 errors=errors,
             )
 
-            self._checkpoint(
-                db=db,
-                cycle_id=cycle_id,
-                phase="SCOUTING",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
-            if new_entries_enabled:
-                try:
-                    scouted = list(
-                        self.scout.run(
-                            db=db,
-                            limit=self.config.autonomous_max_candidates_per_cycle,
-                        )
-                    )
-                except Exception as exc:
-                    db.rollback()
-                    errors.append(
-                        {
-                            "phase": "SCOUT",
-                            "code": "SCOUT_FAILED",
-                            "error": _safe_error(exc),
-                        }
-                    )
-                    scouted = []
-                    fatal_failure = True
+            if lifecycle_only:
+                # Nothing new is scouted, so the post-candidate outcome
+                # pass would only repeat work already done above.
+                summary["scout"] = {
+                    "status": "SKIPPED",
+                    "reason": "LIFECYCLE_ONLY",
+                    "returned_count": 0,
+                    "selected_count": 0,
+                    "limit": (
+                        self.config.autonomous_max_candidates_per_cycle
+                    ),
+                }
             else:
-                scouted = []
-
-            selected = scouted[: self.config.autonomous_max_candidates_per_cycle]
-            candidate_ids = [int(candidate.id) for candidate in selected]
-            selected_count = len(candidate_ids)
-            counts["scouted_count"] = len(scouted)
-            summary["candidate_ids"] = candidate_ids
-            summary["scout"] = {
-                "status": "ENABLED" if new_entries_enabled else "SKIPPED",
-                "reason": (
-                    None
-                    if new_entries_enabled
-                    else "AUTONOMOUS_NEW_ENTRIES_DISABLED"
-                ),
-                "returned_count": len(scouted),
-                "selected_count": selected_count,
-                "limit": self.config.autonomous_max_candidates_per_cycle,
-            }
-
-            for candidate_id in candidate_ids:
-                candidate = db.get(CandidateTrade, candidate_id)
-                item: dict = {"candidate_id": candidate_id}
-                if candidate is not None:
-                    item["symbol"] = candidate.symbol
-
-                previous_risk_id = db.scalar(
-                    select(RiskDecision.id).where(
-                        RiskDecision.candidate_id == candidate_id
-                    )
-                )
-
-                try:
-                    self.pipeline.run(db=db, candidate_id=candidate_id)
-                    risk = self._current_risk(
-                        db=db,
-                        candidate_id=candidate_id,
-                        cycle_started_at=cycle_started_at,
-                        previous_risk_id=previous_risk_id,
-                    )
-                except Exception as exc:
-                    db.rollback()
-                    candidate = db.get(CandidateTrade, candidate_id)
-                    failure_code = (
-                        candidate.status
-                        if candidate is not None
-                        and candidate.status
-                        in {"ANALYSIS_FAILED", "CRITIC_FAILED", "RISK_FAILED"}
-                        else "CANDIDATE_PIPELINE_FAILED"
-                    )
-                    counts["failed_count"] += 1
-                    item.update(
-                        {
-                            "status": "FAILED",
-                            "action": "NOT_ROUTED",
-                            "failure_code": failure_code,
-                        }
-                    )
-                    errors.append(
-                        {
-                            "phase": "DECISION_PIPELINE",
-                            "candidate_id": candidate_id,
-                            "code": failure_code,
-                            "error": _safe_error(exc),
-                        }
-                    )
-                    summary["candidates"].append(item)
-                    self._checkpoint(
-                        db=db,
-                        cycle_id=cycle_id,
-                        phase="CANDIDATE_FAILED",
-                        counts=counts,
-                        summary=summary,
-                        errors=errors,
-                    )
-                    continue
-
-                counts["analyzed_count"] += 1
-                item.update(
-                    {
-                        "status": "DECIDED",
-                        "risk_decision_id": risk.id,
-                        "risk_decision": risk.decision,
-                    }
-                )
-
-                decision = str(risk.decision).strip().upper()
-                if decision == "REJECT":
-                    counts["rejected_count"] += 1
-                    try:
-                        route = self.router.route(db=db, decision_id=risk.id)
-                        item["action"] = "SHADOW_ROUTE"
-                        item["shadow_trade_id"] = route.get("shadow_trade_id")
-                        if not route.get("idempotent_replay", False):
-                            counts["shadow_created_count"] += 1
-                    except Exception as exc:
-                        db.rollback()
-                        counts["failed_count"] += 1
-                        item.update(
-                            {
-                                "status": "FAILED",
-                                "action": "ROUTING_FAILED",
-                            }
-                        )
-                        errors.append(
-                            {
-                                "phase": "DECISION_ROUTER",
-                                "candidate_id": candidate_id,
-                                "risk_decision_id": risk.id,
-                                "code": "REJECT_ROUTING_FAILED",
-                                "error": _safe_error(exc),
-                            }
-                        )
-                elif decision == "ACCEPT":
-                    counts["accepted_count"] += 1
-                    if not execution_enabled:
-                        counts["execution_held_count"] += 1
-                        item.update(
-                            {
-                                "action": "EXECUTION_HELD",
-                                "reason": "PAPER_EXECUTION_DISABLED",
-                            }
-                        )
-                    elif not entry_armed:
-                        # The operator has not armed a new entry, or the arm
-                        # expired or already spent its budget. This is a hold,
-                        # not a REJECT: the decision was a genuine ACCEPT.
-                        counts["execution_held_count"] += 1
-                        item.update(
-                            {
-                                "action": "EXECUTION_HELD",
-                                "reason": HOLD_REASON_RUNTIME_DISARMED,
-                            }
-                        )
-                    else:
-                        try:
-                            route = self.router.route(db=db, decision_id=risk.id)
-                            item["action"] = "PAPER_EXECUTION"
-                            item["executed_trade_id"] = route.get(
-                                "executed_trade_id"
-                            )
-                            item["order_submitted"] = bool(
-                                route.get("order_submitted", False)
-                            )
-                            counts["paper_execution_count"] += 1
-                            if (
-                                item["order_submitted"]
-                                and not route.get("idempotent_replay", False)
-                            ):
-                                item["runtime_control_after"] = (
-                                    self.runtime_control.consume_execution(
-                                        db,
-                                        cycle_id=cycle_id,
-                                    )
-                                )
-                                # One arm session buys once; any further
-                                # candidate in this cycle is held.
-                                entry_armed = (
-                                    self.runtime_control.is_entry_armed(db)
-                                )
-                            if (
-                                item["order_submitted"]
-                                and not route.get("idempotent_replay", False)
-                                and item["executed_trade_id"] is not None
-                            ):
-                                item["immediate_sync"] = self._sync_execution(
-                                    db=db,
-                                    execution_id=int(item["executed_trade_id"]),
-                                    phase="IMMEDIATE_EXECUTION_SYNC",
-                                    summary=summary,
-                                    errors=errors,
-                                )
-                        except Exception as exc:
-                            db.rollback()
-                            counts["failed_count"] += 1
-                            item.update(
-                                {
-                                    "status": "FAILED",
-                                    "action": "ROUTING_FAILED",
-                                }
-                            )
-                            errors.append(
-                                {
-                                    "phase": "DECISION_ROUTER",
-                                    "candidate_id": candidate_id,
-                                    "risk_decision_id": risk.id,
-                                    "code": "ACCEPT_ROUTING_FAILED",
-                                    "error": _safe_error(exc),
-                                }
-                            )
-                else:
-                    counts["failed_count"] += 1
-                    item.update(
-                        {
-                            "status": "FAILED",
-                            "action": "NOT_ROUTED",
-                        }
-                    )
-                    errors.append(
-                        {
-                            "phase": "RISK_DECISION",
-                            "candidate_id": candidate_id,
-                            "risk_decision_id": risk.id,
-                            "code": "INVALID_RISK_DECISION",
-                        }
-                    )
-
-                summary["candidates"].append(item)
-                self._checkpoint(
+                entry_result = self._run_entry_phase(
                     db=db,
                     cycle_id=cycle_id,
-                    phase="CANDIDATE_COMPLETE",
+                    cycle_started_at=cycle_started_at,
+                    execution_enabled=execution_enabled,
+                    entry_armed=entry_armed,
+                    new_entries_enabled=new_entries_enabled,
                     counts=counts,
                     summary=summary,
                     errors=errors,
                 )
-
-            self._checkpoint(
-                db=db,
-                cycle_id=cycle_id,
-                phase="OUTCOMES_AFTER",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
-            self._evaluate_outcomes(
-                db=db,
-                phase="OUTCOMES_AFTER",
-                counts=counts,
-                summary=summary,
-                errors=errors,
-            )
+                selected_count = entry_result["selected_count"]
+                fatal_failure = entry_result["fatal_failure"]
         except Exception as exc:
             db.rollback()
             fatal_failure = True

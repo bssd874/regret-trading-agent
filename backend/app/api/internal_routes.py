@@ -14,6 +14,11 @@ drive it, and GitHub Actions stays only as a fallback.
 The endpoint runs exactly one existing cycle. It contains no trading logic, no
 loop, no thread and no sleep, so it is safe on ephemeral serverless runtimes.
 It never arms the agent; it only reads the persisted runtime permission.
+
+Because it is meant to run often, it is also cost-aware. With new entries
+disarmed it runs the lifecycle half only — reconciliation, exits and due
+outcomes — and never reaches the market scout, the analyst or the critic. With
+nothing outstanding at all it returns IDLE without claiming a cycle.
 """
 
 import secrets
@@ -28,6 +33,12 @@ from backend.app.services.autonomous_agent_service import (
     autonomous_agent,
 )
 from backend.app.services.db_diagnostics import automation_database_error
+from backend.app.services.lifecycle_workload_service import (
+    lifecycle_workload,
+)
+from backend.app.services.runtime_control_service import (
+    runtime_control_service,
+)
 
 
 router = APIRouter(prefix="/internal", tags=["internal-scheduler"])
@@ -37,6 +48,10 @@ SCHEDULER_SECRET_HEADER = "X-Regret-Scheduler-Secret"
 # Recorded in the cycle summary. The persisted `trigger` column stays within
 # its existing CHECK constraint, so no migration is needed on a live database.
 TRIGGER_SOURCE = "SCHEDULED_HEARTBEAT"
+
+MODE_FULL_CYCLE = "FULL_CYCLE"
+MODE_LIFECYCLE_ONLY = "LIFECYCLE_ONLY"
+STATUS_IDLE = "IDLE"
 
 
 def require_scheduler(
@@ -75,17 +90,39 @@ def run_scheduled_cycle(
         # A hosted run must never operate against the local SQLite database.
         raise HTTPException(status_code=503, detail=misconfigured)
 
+    # The heartbeat only reads permission; it never grants it.
+    entry_armed = runtime_control_service.is_entry_armed(db)
+    cycle_mode = MODE_FULL_CYCLE if entry_armed else MODE_LIFECYCLE_ONLY
+
+    if not entry_armed:
+        # Cost guard. With no new entries authorised and nothing outstanding
+        # to reconcile, monitor or evaluate, the tick does no work at all:
+        # no market-data request, no provider call, no AgentCycle row.
+        workload = lifecycle_workload(db)
+        if not workload["has_work"]:
+            return {
+                "status": STATUS_IDLE,
+                "mode": cycle_mode,
+                "trigger_source": TRIGGER_SOURCE,
+                "cycle_id": None,
+                "started_at": None,
+                "completed_at": None,
+                "workload": workload,
+            }
+
     try:
         cycle = autonomous_agent.run_cycle(
             db=db,
             trigger="SCHEDULED",
             trigger_source=TRIGGER_SOURCE,
+            lifecycle_only=not entry_armed,
         )
     except AgentCycleAlreadyRunning:
         # The persistent AgentCycle lock is authoritative. A second concurrent
         # heartbeat reports this and submits nothing.
         return {
             "status": "ALREADY_RUNNING",
+            "mode": cycle_mode,
             "trigger_source": TRIGGER_SOURCE,
             "cycle_id": None,
             "started_at": None,
@@ -94,6 +131,7 @@ def run_scheduled_cycle(
 
     return {
         "status": cycle.status,
+        "mode": cycle_mode,
         "trigger_source": TRIGGER_SOURCE,
         "cycle_id": cycle.id,
         "started_at": cycle.started_at,

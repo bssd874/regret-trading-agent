@@ -151,7 +151,16 @@ def run_cycle_once(
                     f"({claim.get('reason')}); new entries remain disarmed."
                 )
 
-        cycle = agent.run_cycle(db=db, trigger="SCHEDULED")
+        # Same rule as the HTTP heartbeat: a claimed ARM session, or an
+        # already-effective arm, runs the full pipeline. Anything else runs
+        # the lifecycle half only, so the cron fallback costs no provider
+        # quota while no new entry is authorised.
+        entry_armed = runtime_control.is_entry_armed(db)
+        cycle = agent.run_cycle(
+            db=db,
+            trigger="SCHEDULED",
+            lifecycle_only=not entry_armed,
+        )
     except AgentCycleAlreadyRunning:
         print(
             "AGENT_CYCLE_ALREADY_RUNNING: "
@@ -169,7 +178,8 @@ def run_cycle_once(
             db.close()
 
     print(
-        f"AgentCycle {cycle.id} finished with status {cycle.status}; "
+        f"AgentCycle {cycle.id} finished with status {cycle.status} "
+        f"({'FULL_CYCLE' if entry_armed else 'LIFECYCLE_ONLY'}); "
         "one-shot process exiting."
     )
     return 0

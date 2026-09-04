@@ -37,6 +37,7 @@ def test_one_shot_invocation_runs_exactly_one_scheduled_cycle(
     agent.run_cycle.assert_called_once_with(
         db=session,
         trigger="SCHEDULED",
+        lifecycle_only=True,
     )
     session.close.assert_called_once_with()
     assert "one-shot process exiting" in capsys.readouterr().out
@@ -74,6 +75,7 @@ def test_one_shot_respects_existing_cycle_lock(monkeypatch, capsys):
     agent.run_cycle.assert_called_once_with(
         db=session,
         trigger="SCHEDULED",
+        lifecycle_only=True,
     )
     session.close.assert_called_once_with()
     assert "AGENT_CYCLE_ALREADY_RUNNING" in capsys.readouterr().out
@@ -149,9 +151,10 @@ def test_one_shot_observe_configuration_keeps_execution_disabled(monkeypatch):
 # ---------------------------------------------------------------
 # Arm session claim (19-20)
 # ---------------------------------------------------------------
-def _claiming_runtime(result):
+def _claiming_runtime(result, *, armed=True):
     runtime = MagicMock()
     runtime.claim_session.return_value = result
+    runtime.is_entry_armed.return_value = armed
     return runtime
 
 
@@ -178,7 +181,11 @@ def test_one_shot_claims_the_arm_session_before_running_the_cycle(
 
     assert result == 0
     runtime.claim_session.assert_called_once_with(session, "session-xyz")
-    agent.run_cycle.assert_called_once_with(db=session, trigger="SCHEDULED")
+    agent.run_cycle.assert_called_once_with(
+        db=session,
+        trigger="SCHEDULED",
+        lifecycle_only=False,
+    )
     assert "ARMED" in capsys.readouterr().out
 
 
@@ -191,7 +198,8 @@ def test_unclaimable_session_still_runs_the_cycle_without_arming(
     agent.run_cycle.return_value = SimpleNamespace(id=42, status="COMPLETED")
     session = MagicMock()
     runtime = _claiming_runtime(
-        {"claimed": False, "reason": "SESSION_MISMATCH"}
+        {"claimed": False, "reason": "SESSION_MISMATCH"},
+        armed=False,
     )
 
     result = run_cycle_once(
@@ -209,8 +217,13 @@ def test_unclaimable_session_still_runs_the_cycle_without_arming(
     assert result == 0
     assert "NOT claimed" in output
     assert "SESSION_MISMATCH" in output
-    # The cycle still runs; it simply has no entry permission.
-    agent.run_cycle.assert_called_once_with(db=session, trigger="SCHEDULED")
+    # The cycle still runs, but with no entry permission it stays on the
+    # cheap lifecycle half.
+    agent.run_cycle.assert_called_once_with(
+        db=session,
+        trigger="SCHEDULED",
+        lifecycle_only=True,
+    )
 
 
 def test_scheduled_run_without_a_session_never_claims_or_arms(monkeypatch):

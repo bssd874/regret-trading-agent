@@ -142,14 +142,39 @@ absent secret returns 401. The secret is never sent to the browser and never
 appears in a response.
 
 The endpoint runs exactly one existing `AutonomousAgent` cycle and returns
-`cycle_id`, `status`, `trigger_source`, `started_at` and `completed_at`. It
-holds no loop, thread, sleep or timer, so it is safe on an ephemeral serverless
-runtime. It duplicates no trading logic.
+`cycle_id`, `status`, `mode`, `trigger_source`, `started_at` and
+`completed_at`. It holds no loop, thread, sleep or timer, so it is safe on an
+ephemeral serverless runtime. It duplicates no trading logic.
 
-Ordering is the pipeline's existing position-first sequence: reconcile pending
-executions, reconcile exits, monitor open positions and fire
-TAKE_PROFIT / STOP_LOSS / TIME_EXIT, evaluate outcomes, and only then scout new
-entries — which still requires an armed operator session.
+### Two modes, chosen automatically
+
+Because the heartbeat is meant to run often, it must not spend provider quota
+discovering trades nobody authorised. It picks its mode from the persisted
+runtime permission:
+
+| Effective new-entry permission | Mode | What runs |
+|---|---|---|
+| ARMED | `FULL_CYCLE` | lifecycle, then scout → analyst → critic → risk gate, and at most one BUY |
+| DISARMED, expired, or budget spent | `LIFECYCLE_ONLY` | reconciliation, exits and due outcomes only |
+
+`LIFECYCLE_ONLY` never calls the market scout, the analyst or the critic, and
+creates no candidate, risk decision or new ShadowTrade. It still reconciles
+pending BUY and SELL orders, monitors open positions, fires
+TAKE_PROFIT / STOP_LOSS / TIME_EXIT, submits the paper SELL, and resolves
+already-existing ShadowTrades to AVOIDED_LOSS or MISSED_ALPHA.
+
+When nothing at all is outstanding the tick returns `status: IDLE` without even
+claiming an `AgentCycle`, so an always-on heartbeat over a quiet account costs
+nothing. The idle check reads only the local database and mirrors the
+pipeline's own predicates, so it cannot report idle while real work is waiting.
+
+After a BUY spends the execution budget the runtime auto-disarms, so the very
+next tick hands over to `LIFECYCLE_ONLY` and keeps monitoring that position to
+its exit. The GitHub cron fallback follows the same rule. Only ARM & START, or
+a still-effective arm, runs the full pipeline.
+
+Each cycle records `cycle_mode` and `trigger_source` in its summary. The
+persisted `trigger` column stays `SCHEDULED`, so no migration is needed.
 
 The heartbeat never arms the agent. It reads the persisted runtime permission
 only. While DISARMED it opens no new position and every exit path stays live,

@@ -35,6 +35,8 @@ from backend.app.services.runtime_control_service import (
 )
 from backend.tests.runtime_control_helpers import NOW, seed_control
 from backend.tests.test_autonomous_agent_service import _agent, _settings
+from backend.tests.test_outcome_pipeline import _executed
+from backend.tests.test_decision_router import _create_routing_chain
 from backend.tests.test_position_exit_service import (
     FixedMarketData,
     _open_position,
@@ -67,6 +69,15 @@ def _configured(monkeypatch):
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("VERCEL", raising=False)
     monkeypatch.delenv("REGRET_REQUIRE_DATABASE_URL", raising=False)
+
+
+def _seed_lifecycle_work(db, candidate_factory, *, symbol="PEND"):
+    """A pending BUY, so the heartbeat has genuine lifecycle work to do."""
+    candidate = candidate_factory(symbol=symbol, entry_price=100.0)
+    risk, _ = _create_routing_chain(db, candidate, decision="ACCEPT")
+    execution = _executed(db, candidate, risk, status="accepted")
+    db.commit()
+    return execution
 
 
 def _stub_agent(monkeypatch, **overrides):
@@ -131,8 +142,13 @@ def test_wrong_or_missing_scheduler_secret_is_denied(monkeypatch, db_session):
     agent.run_cycle.assert_not_called()
 
 
-def test_correct_secret_invokes_exactly_one_cycle(monkeypatch, db_session):
+def test_correct_secret_invokes_exactly_one_cycle(
+    monkeypatch,
+    db_session,
+    candidate_factory,
+):
     _configured(monkeypatch)
+    _seed_lifecycle_work(db_session, candidate_factory)
     agent = _stub_agent(monkeypatch)
 
     with _client(db_session) as client:
@@ -147,6 +163,7 @@ def test_correct_secret_invokes_exactly_one_cycle(monkeypatch, db_session):
         db=db_session,
         trigger="SCHEDULED",
         trigger_source="SCHEDULED_HEARTBEAT",
+        lifecycle_only=True,
     )
 
 
@@ -170,8 +187,10 @@ def test_heartbeat_does_not_reopen_the_public_write_api(monkeypatch, db_session)
 def test_concurrent_heartbeat_cannot_create_a_duplicate_cycle(
     monkeypatch,
     db_session,
+    candidate_factory,
 ):
     _configured(monkeypatch)
+    _seed_lifecycle_work(db_session, candidate_factory)
     agent = _stub_agent(monkeypatch)
     agent.run_cycle.side_effect = AgentCycleAlreadyRunning()
 
@@ -182,6 +201,7 @@ def test_concurrent_heartbeat_cannot_create_a_duplicate_cycle(
     assert response.status_code == 200
     assert body["status"] == "ALREADY_RUNNING"
     assert body["cycle_id"] is None
+    assert body["mode"] == "LIFECYCLE_ONLY"
     assert db_session.scalar(select(func.count()).select_from(AgentCycle)) == 0
 
 
@@ -296,40 +316,42 @@ def _real_agent_response(client):
 def test_disarmed_heartbeat_cannot_buy_and_never_arms_the_runtime(
     monkeypatch,
     db_session,
+    candidate_factory,
     paper_broker,
 ):
     _configured(monkeypatch)
     _install_agent(monkeypatch)
     seed_control(db_session, state="DISARMED")
+    _seed_lifecycle_work(db_session, candidate_factory, symbol="DISPEND")
 
     with _client(db_session) as client:
         response = _real_agent_response(client)
 
+    body = response.json()
     assert response.status_code == 200
+    assert body["mode"] == "LIFECYCLE_ONLY"
+
     cycle = db_session.scalar(
         select(AgentCycle).order_by(AgentCycle.id.desc()).limit(1)
     )
     summary = json.loads(cycle.summary_json)
     assert summary["trigger_source"] == "SCHEDULED_HEARTBEAT"
+    assert summary["cycle_mode"] == "LIFECYCLE_ONLY"
     assert cycle.paper_execution_count == 0
-    assert db_session.scalar(
-        select(func.count()).select_from(ExecutedTrade)
-    ) == 0
     paper_broker.submit.assert_not_called()
+
+    # No new entry work happened at all: nothing was scouted or decided.
+    assert summary["scout"]["status"] == "SKIPPED"
+    assert summary["scout"]["reason"] == "LIFECYCLE_ONLY"
+    assert summary["candidates"] == []
+    assert cycle.scouted_count == 0
+    assert cycle.analyzed_count == 0
 
     # The heartbeat only reads permission; it never grants it.
     control = runtime_control_service.get_control(db_session)
     assert control.state == "DISARMED"
     assert control.new_entries_armed is False
     assert control.executions_used == 0
-
-    held = [
-        item
-        for item in summary["candidates"]
-        if item.get("action") == "EXECUTION_HELD"
-    ]
-    assert held, "a current-cycle ACCEPT should be held, not executed"
-    assert held[0]["reason"] == HOLD_REASON_RUNTIME_DISARMED
 
 
 def test_heartbeat_respects_an_exhausted_execution_budget(
