@@ -11,6 +11,13 @@ on:
           leave this empty and can never arm new entries. Not a secret.
         required: false
         default: ""
+      diagnostic_only:
+        description: >-
+          Run only the read-only database identity diagnostic and exit.
+          Starts no cycle, claims no arm session, contacts no provider
+          and submits no order. Prints non-secret metadata only.
+        required: false
+        default: "false"
 
 concurrency:
   group: regret-autonomous-observe
@@ -59,4 +66,7 @@ jobs:
         # shell command, so the input cannot inject script.
         env:
           REGRET_ARM_SESSION_ID: ${{ inputs.arm_session_id }}
+          REGRET_DIAGNOSTIC_ONLY: ${{ inputs.diagnostic_only }}
+          # Automation must never fall back to the local SQLite database.
+          REGRET_REQUIRE_DATABASE_URL: "true"
         run: python -m backend.scripts.run_autonomous_cycle_once

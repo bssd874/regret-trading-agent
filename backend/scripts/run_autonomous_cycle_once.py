@@ -4,6 +4,12 @@ import os
 from backend.app import models as _models  # noqa: F401
 from backend.app.core.config import Settings, settings
 from backend.app.db.database import Base, SessionLocal, engine
+from backend.app.services.db_diagnostics import (
+    automation_database_error,
+    collect_database_identity,
+    diagnostic_only_requested,
+    format_diagnostic,
+)
 from backend.app.services.autonomous_agent_service import (
     AgentCycleAlreadyRunning,
     AutonomousAgent,
@@ -26,6 +32,15 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument(
+        "--diagnostic-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Report read-only database identity and exit. Runs no cycle, "
+            "contacts no provider, and submits no order."
+        ),
+    )
+    parser.add_argument(
         "--arm-session-id",
         default=None,
         help=(
@@ -34,6 +49,41 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def run_database_diagnostic(
+    *,
+    config: Settings = settings,
+    session_factory=SessionLocal,
+) -> int:
+    """Print safe database identity metadata and exit.
+
+    Never starts a cycle, never contacts Alpaca, Azure OpenAI or NVIDIA, and
+    never writes anything. Exits non-zero only when the database is
+    unreachable or the environment is misconfigured.
+    """
+    misconfigured = automation_database_error(config)
+    if misconfigured:
+        print(misconfigured)
+        return 1
+
+    db = None
+    try:
+        db = session_factory()
+        report = collect_database_identity(db)
+    except Exception as exc:
+        print(
+            "REGRET database diagnostic failed safely: "
+            f"{type(exc).__name__}"
+        )
+        return 1
+    finally:
+        if db is not None:
+            db.close()
+
+    for line in format_diagnostic(report):
+        print(line)
+    return 0
 
 
 def run_cycle_once(
@@ -62,6 +112,12 @@ def run_cycle_once(
             "No scheduled cycle was run."
         )
         return 0
+
+    misconfigured = automation_database_error(config)
+    if misconfigured:
+        # Never let an automated run persist to an ephemeral SQLite file.
+        print(misconfigured)
+        return 1
 
     try:
         Base.metadata.create_all(bind=engine_bind)
@@ -118,6 +174,8 @@ def run_cycle_once(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.diagnostic_only or diagnostic_only_requested():
+        return run_database_diagnostic()
     arm_session_id = args.arm_session_id or os.getenv(ARM_SESSION_ENV_VAR)
     return run_cycle_once(arm_session_id=arm_session_id)
 
