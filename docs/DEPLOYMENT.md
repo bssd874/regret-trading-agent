@@ -118,6 +118,50 @@ lives in `frontend/` while the Python application resolves from the repository
 root; two zero-config projects plus an explicit CORS allowlist is the smaller
 and more reliable arrangement.
 
+## Position-monitoring heartbeat
+
+An open paper position is only safe while something re-evaluates it against its
+recorded target, stop and horizon. That clock must be dependable.
+
+GitHub's cron is not. In one observed window the schedule was active for about
+five hours before its first run, produced a single run, then nothing for the
+next several hours. Treat it as a fallback, never as the primary heartbeat.
+
+The primary heartbeat is provider-neutral. Any dependable external scheduler —
+a hosted cron service, an uptime monitor, a cloud scheduler, or a machine you
+control — makes one authenticated call:
+
+```text
+POST https://<api>/api/internal/scheduled-cycle
+X-Regret-Scheduler-Secret: <SCHEDULER_TRIGGER_SECRET>
+```
+
+Set `SCHEDULER_TRIGGER_SECRET` as a server-side value on the API project. While
+it is unset the endpoint returns 503, so the heartbeat fails closed. A wrong or
+absent secret returns 401. The secret is never sent to the browser and never
+appears in a response.
+
+The endpoint runs exactly one existing `AutonomousAgent` cycle and returns
+`cycle_id`, `status`, `trigger_source`, `started_at` and `completed_at`. It
+holds no loop, thread, sleep or timer, so it is safe on an ephemeral serverless
+runtime. It duplicates no trading logic.
+
+Ordering is the pipeline's existing position-first sequence: reconcile pending
+executions, reconcile exits, monitor open positions and fire
+TAKE_PROFIT / STOP_LOSS / TIME_EXIT, evaluate outcomes, and only then scout new
+entries — which still requires an armed operator session.
+
+The heartbeat never arms the agent. It reads the persisted runtime permission
+only. While DISARMED it opens no new position and every exit path stays live,
+so a scheduler tick can always close a stranded position. Concurrent ticks are
+safe: the persistent `AgentCycle` lock is authoritative, and a second caller
+receives `status: ALREADY_RUNNING` without submitting anything. A hosted run
+whose `DATABASE_URL` is missing returns 503 rather than falling back to SQLite.
+
+A recommended cadence is every 5 minutes while a position is open. Suggested
+`AUTONOMOUS_CYCLE_SECONDS` remains the pipeline's own guidance, not the
+scheduler's.
+
 ## GitHub Actions scheduled agent
 
 The workflow is `.github/workflows/autonomous-observe.yml`. Add these encrypted

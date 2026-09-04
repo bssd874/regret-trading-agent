@@ -588,7 +588,14 @@ class AutonomousAgent:
         *,
         db: Session,
         trigger: str = "SCHEDULED",
+        trigger_source: str | None = None,
     ) -> AgentCycle:
+        """Run one bounded cycle.
+
+        `trigger` stays within the persisted CHECK constraint. `trigger_source`
+        is a free-form audit label recorded in the summary, so a heartbeat can
+        be told apart from a cron run without a schema migration.
+        """
         execution_enabled = bool(self.config.paper_execution_enabled)
         new_entries_enabled = bool(
             self.config.autonomous_new_entries_enabled
@@ -617,6 +624,8 @@ class AutonomousAgent:
             "candidate_ids": [],
             "candidates": [],
         }
+        if trigger_source:
+            summary["trigger_source"] = trigger_source
         errors: list[dict] = []
         fatal_failure = False
         selected_count = 0

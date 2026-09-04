@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     # unset, every admin mutation is disabled: the control plane fails closed.
     admin_control_secret: str | None = None
 
+    # Server-side shared secret for the internal scheduler heartbeat. Any
+    # reliable external scheduler may call the endpoint with it. Unset means
+    # the heartbeat is disabled, so it also fails closed.
+    scheduler_trigger_secret: str | None = None
+
     # A START_REQUESTED arm expires if the dispatched workflow never claims it.
     runtime_start_request_ttl_minutes: int = Field(
         default=5,

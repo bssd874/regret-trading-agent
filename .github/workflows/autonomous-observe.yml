@@ -1,5 +1,10 @@
 name: REGRET autonomous observe cycle
 
+# FALLBACK ONLY. GitHub's cron is best-effort and has been observed to
+# leave multi-hour gaps, so it must not be the sole clock for monitoring
+# an open paper position. The primary heartbeat is an external scheduler
+# calling POST /api/internal/scheduled-cycle. This schedule stays as a
+# secondary safety net; workflow_dispatch remains the immediate ARM path.
 on:
   schedule:
     - cron: "*/15 * * * *"
