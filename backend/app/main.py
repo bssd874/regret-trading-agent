@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,7 +15,22 @@ from backend.app import models as _models  # noqa: F401
 # Create missing database tables
 # =========================================================
 
-Base.metadata.create_all(bind=engine)
+def bootstrap_schema() -> None:
+    """Create missing tables outside serverless runtimes.
+
+    Serverless functions are short-lived and share the hosted PostgreSQL
+    database with `backend.scripts.init_db` and the scheduled one-shot agent,
+    which own schema creation. Running DDL on every cold start would add
+    latency and would make the whole API fail to import whenever the database
+    is momentarily unreachable.
+    """
+    if os.getenv("VERCEL"):
+        return
+
+    Base.metadata.create_all(bind=engine)
+
+
+bootstrap_schema()
 
 
 app = FastAPI(

@@ -235,13 +235,19 @@ The TSLA paper position was subsequently closed by the autonomous `TIME_EXIT` pa
 
 ## Public deployment
 
-The public demo architecture is Vercel (read-only Next.js terminal), a
-Northflank FastAPI service, Northflank PostgreSQL, and a separate Northflank
-scheduled job. Alpaca remains PAPER-only; Azure OpenAI, NVIDIA, Alpaca, and
-database credentials remain server-side.
+- Terminal: <https://regret-terminal.vercel.app>
+- API: <https://regret-api.vercel.app>
 
-The scheduled job invokes exactly one existing autonomous cycle every 15
-minutes and exits. It runs in **OBSERVE** mode, so the terminal truthfully shows
+The public demo architecture uses two Vercel projects from this monorepo: the
+read-only Next.js terminal in `frontend/` and the FastAPI application through
+the root `app.py` ASGI entrypoint. Both the API and the scheduled agent use the
+same persistent Neon PostgreSQL database. GitHub Actions invokes the bounded
+one-shot agent on a schedule. Alpaca remains PAPER-only; Azure OpenAI, NVIDIA,
+Alpaca, and database credentials remain server-side.
+
+The scheduled workflow invokes exactly one existing autonomous cycle every 15
+minutes and exits, with a ten-minute timeout and a single concurrency group. It
+runs in **OBSERVE** mode, so the terminal truthfully shows
 **AGENT ACTIVE · OBSERVE** while paper execution remains disabled:
 
 ```dotenv
@@ -255,7 +261,9 @@ AUTONOMOUS_CYCLE_SECONDS=900
 AUTONOMOUS_STALE_CYCLE_SECONDS=1800
 ```
 
-The API process itself never starts an agent loop. The scheduled job calls the
+The API process itself never starts an agent loop. It also starts no thread,
+scheduler, or background task, issues no schema DDL on a serverless cold start,
+and keeps no database connection pool between invocations. The scheduled job calls the
 Python service directly, never the public run-once endpoint. A genuine current
 cycle `ACCEPT` is recorded as `EXECUTION_HELD`; no new Alpaca PAPER order can be
 submitted. The dashboard still shows the verified persisted BUY → `TIME_EXIT`
@@ -267,7 +275,7 @@ All HTTP mutation/development routes are also disabled in the hosted demo by
 protected by `PUBLIC_AGENT_TRIGGER_ENABLED=false`. No infinite worker is hosted.
 
 Deployment commands, PostgreSQL initialization, explicit demo-data migration,
-CORS setup, Vercel/Northflank configuration, validation, and the public API audit
+CORS setup, Vercel/Neon/GitHub configuration, validation, and the public API audit
 are documented in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Day 03 decision dashboard and replay

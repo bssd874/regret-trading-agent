@@ -20,6 +20,7 @@ Thumbs.db
 # Next.js
 node_modules/
 .next/ 
+.vercel/
 
 # Local database
 *.db

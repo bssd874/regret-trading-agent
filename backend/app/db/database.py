@@ -1,5 +1,8 @@
+import os
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from backend.app.core.config import settings
 
@@ -12,6 +15,13 @@ def build_engine(database_url: str):
     engine_options = {}
     if database_url.startswith("sqlite"):
         engine_options["connect_args"] = {"check_same_thread": False}
+    else:
+        # Hosted PostgreSQL drops idle connections, so pooled connections are
+        # verified before reuse. Serverless invocations additionally keep no
+        # pool at all, because the process may be frozen between requests.
+        engine_options["pool_pre_ping"] = True
+        if os.getenv("VERCEL"):
+            engine_options["poolclass"] = NullPool
 
     configured_engine = create_engine(database_url, **engine_options)
 

@@ -1,31 +1,28 @@
-# REGRET public demo deployment
+# REGRET public deployment
 
-The public hackathon stack is a read-only Vercel dashboard backed by a
-Northflank FastAPI service and Northflank PostgreSQL. A separate Northflank cron
-job runs one bounded autonomous cycle every 15 minutes in OBSERVE mode. Alpaca
-PAPER order submission and public mutation APIs remain disabled.
-
-## Architecture
+The public hackathon stack uses two Vercel projects, one Neon PostgreSQL
+database, and one scheduled GitHub Actions workflow:
 
 ```text
-Public browser
-  -> Vercel (Next.js, frontend/)
-  -> Northflank Web Service (FastAPI, repository-root Dockerfile)
-       -> Northflank PostgreSQL addon
-       -> Alpaca PAPER / Azure OpenAI / NVIDIA NIM (server-side only)
-
-Northflank Cron Job
-  -> python -m backend.scripts.run_autonomous_cycle_once
-  -> same PostgreSQL addon and server-side provider secrets
+Browser -> Vercel Next.js (frontend/) -> Vercel FastAPI (app.py)
+                                             |
+                                             v
+                                      Neon PostgreSQL
+                                             ^
+                                             |
+                         GitHub Actions one-shot OBSERVE cycle
 ```
 
-The FastAPI process does not start a background worker. The cron image overrides
-the Docker command, invokes the existing `AutonomousAgent` once, and exits.
+The dashboard is read-only. The scheduled workflow calls the existing Python
+service directly; it does not call a public HTTP mutation endpoint. It runs
+`python -m backend.scripts.run_autonomous_cycle_once` every 15 minutes and
+exits after exactly one cycle. GitHub Actions concurrency prevents overlapping
+workflow runs, and the persistent `AgentCycle` lock remains the database-level
+guard.
 
-## Safe hosted configuration
+## Safe hosted mode
 
-Apply these values to both the API and the scheduled job through Northflank
-configuration/secret groups:
+Set these values in the Vercel API project and GitHub Actions workflow:
 
 ```dotenv
 ALPACA_PAPER=true
@@ -37,138 +34,122 @@ PUBLIC_WRITE_API_ENABLED=false
 AUTONOMOUS_CYCLE_SECONDS=900
 AUTONOMOUS_STALE_CYCLE_SECONDS=1800
 AUTONOMOUS_MAX_CANDIDATES_PER_CYCLE=2
-DATABASE_URL=<private-northflank-postgresql-uri>
 ```
 
-`AUTONOMOUS_STALE_CYCLE_SECONDS` is intentionally greater than the cycle value,
-as required by application validation. The cron schedule, rather than
-`AUTONOMOUS_CYCLE_SECONDS`, controls hosted cadence.
+`AUTONOMOUS_STALE_CYCLE_SECONDS` is intentionally greater than the nominal
+cycle interval because configuration validation rejects equal values. In this
+mode, genuine current-cycle ACCEPT decisions become `EXECUTION_HELD`; no new
+Alpaca PAPER order is submitted. `ALPACA_PAPER=false` remains invalid, and
+live-money trading is unsupported.
 
-Set the API's CORS value initially to `http://localhost:3000`, then replace it
-with the exact Vercel production origin. Do not use a wildcard. The cron job
-does not need CORS.
+## Neon
 
-Keep Alpaca, Azure OpenAI, NVIDIA, and database values server-side only. Never
-put them in Vercel, `NEXT_PUBLIC_*`, Git, the Dockerfile, logs, or documentation.
+Create or reuse one free Neon project and keep its connection URI private. Run
+the existing non-destructive schema initializer and one-time import locally
+with `DATABASE_URL` injected into the process:
 
-## Container commands
-
-Northflank builds the repository-root `Dockerfile`. Its default command runs one
-FastAPI process on `0.0.0.0` and the platform-provided `PORT`:
-
-```text
-uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT --workers 1
+```bash
+python -m backend.scripts.init_db
+python -m backend.scripts.export_demo_data --help
+python -m backend.scripts.import_demo_data --help
 ```
 
-Use command overrides for bounded jobs:
+Use the scripts' displayed arguments. Do not commit the generated JSON file,
+recompute history, or expose the database URI. The API project and scheduled
+workflow must receive the same `DATABASE_URL`.
 
-```text
-Schema initialization: python -m backend.scripts.init_db
-One autonomous cycle: python -m backend.scripts.run_autonomous_cycle_once
-```
+## Vercel FastAPI project
 
-Never use `backend.scripts.run_autonomous_agent` as a cron command because it
-contains the intentionally long-running worker loop.
+The deployed project is `regret-api` at <https://regret-api.vercel.app>, built
+from the repository root with the **FastAPI** framework preset. Vercel detects
+the exported FastAPI `app` in root `app.py`; `requirements.txt` contains the
+Python dependencies and `.vercelignore` keeps the frontend, tests, docs, local
+databases, and every `.env` file out of the function bundle.
 
-## Northflank resources
+Two properties keep the API serverless-safe. First, `app.py` imports the
+existing application only; no worker thread, scheduler loop, or background task
+is started. Second, `backend.app.main.bootstrap_schema` skips `create_all` when
+the platform-provided `VERCEL` variable is present, because schema creation is
+owned by `backend.scripts.init_db` and the scheduled one-shot agent. A cold
+start therefore issues no DDL, and `/health` keeps answering even when the
+database is momentarily unreachable. `build_engine` enables `pool_pre_ping` for
+PostgreSQL and uses `NullPool` on Vercel so frozen invocations hold no
+connections.
 
-Create or reuse project `REGRET` on the Developer Sandbox plan:
+Configure server-side environment values:
 
-1. Create one free PostgreSQL addon without HA, replicas, or paid storage.
-2. Link its normal application URI to a secret group as `DATABASE_URL`.
-3. Add the required server-provider secrets and safe hosted values to the group.
-4. Create `regret-api` from `bssd874/regret-trading-agent`, branch
-   `feat/autonomous-agent-loop`, using `/Dockerfile`.
-5. Expose only the HTTP container port and route `/` to it. Configure an HTTP
-   readiness check on `/health`.
-6. Create a temporary/manual schema job using the same source and
-   `python -m backend.scripts.init_db`, then run it once.
-7. Create `regret-agent-job` from the same branch and image. Override its command
-   with `python -m backend.scripts.run_autonomous_cycle_once`.
+- `DATABASE_URL`
+- `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`
+- `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+  `AZURE_OPENAI_DEPLOYMENT`
+- `NVIDIA_API_KEY`
+- all safe hosted-mode flags above
+- initially, `CORS_ALLOWED_ORIGINS=http://localhost:3000`
 
-Cron settings:
+Never prefix backend secrets with `NEXT_PUBLIC_`. Store `DATABASE_URL` and the
+provider credentials as **Sensitive** values. Paste the Neon URI as a single
+unquoted line; a stray quote character is silently accepted and then fails at
+runtime as an unresolvable host.
 
-```text
-Schedule: */15 * * * *
-Concurrency: Forbid
-Retry limit: 0
-Time limit: 600 seconds
-Run on source change: Never
-```
+Verify `/health`, the GET observability APIs, `POST /api/agent/run-once`
+returning 403, and another mutation route returning 403.
 
-Run the agent job manually once before enabling its schedule. A successful run
-must create exactly one OBSERVE `AgentCycle`, then terminate. A REJECT may create
-a `ShadowTrade`; a genuine ACCEPT must become `EXECUTION_HELD`. Neither path may
-submit an order while `PAPER_EXECUTION_ENABLED=false`.
+## Vercel frontend project
 
-## Verified data migration
-
-Export the verified local SQLite dataset to a temporary path:
-
-```powershell
-$env:DATABASE_URL = "sqlite:///./regret.db"
-.\.venv\Scripts\python.exe -m backend.scripts.export_demo_data `
-  --output "$env:TEMP\regret-demo-verified.json"
-```
-
-Initialize and import using a bounded Northflank job or a temporary Northflank
-database proxy. The effective command is:
-
-```text
-python -m backend.scripts.import_demo_data --input <temporary-export-path>
-```
-
-The import is intentional, preserves IDs and relationships, skips identical
-records on repeat, and rolls back on conflicts. Do not commit the export or
-permanently expose PostgreSQL. Delete the temporary export after hosted API
-verification succeeds.
-
-## API validation
-
-Before deploying the frontend, verify:
-
-```text
-GET  https://<northflank-api-domain>/health             -> 200
-GET  https://<northflank-api-domain>/api/agent/status   -> OBSERVE
-GET  https://<northflank-api-domain>/api/regret/metrics -> 200
-POST https://<northflank-api-domain>/api/agent/run-once -> 403
-POST https://<northflank-api-domain>/api/scout/run      -> 403
-```
-
-Blocked HTTP calls must not create an `AgentCycle`, invoke providers, or submit
-orders. The scheduled job bypasses no safety checks; it calls Python services
-directly and retains the persistent AgentCycle lock.
-
-## Vercel
-
-Deploy the current feature-branch working tree from `frontend/`. The only public
-environment variable is:
+The deployed project is `regret-terminal` at
+<https://regret-terminal.vercel.app>, deployed from `frontend/` with the Next.js
+preset. Its only deployment environment value is:
 
 ```dotenv
-NEXT_PUBLIC_API_BASE_URL=https://<northflank-api-domain>
+NEXT_PUBLIC_API_BASE_URL=https://regret-api.vercel.app
 ```
 
-After Vercel assigns the production URL, set the API to its exact origin:
+Because that value is inlined at build time, set it before building. After
+Vercel assigns the frontend production URL, update the API project to the exact
+frontend origins and redeploy the API:
 
 ```dotenv
-CORS_ALLOWED_ORIGINS=https://<frontend-domain>
+CORS_ALLOWED_ORIGINS=https://regret-terminal.vercel.app,https://regret-terminal-<team>.vercel.app
 ```
 
-Redeploy/restart the API and verify browser requests reach Northflank rather
-than localhost.
+Do not use a wildcard origin. A single Vercel project cannot serve both halves
+here without the legacy `builds` configuration, because the Next.js application
+lives in `frontend/` while the Python application resolves from the repository
+root; two zero-config projects plus an explicit CORS allowlist is the smaller
+and more reliable arrangement.
 
-## Final validation
+## GitHub Actions scheduled agent
 
-Verify the public terminal shows:
+The workflow is `.github/workflows/autonomous-observe.yml`. Add these encrypted
+repository Actions secrets:
 
-- `PAPER MODE`, `API HEALTHY`, and `AGENT ACTIVE · OBSERVE`
-- persisted Decision Value and evaluated-decision metrics
-- DUO `AVOIDED_LOSS` and BIAF `MISSED_ALPHA` replays
-- TSLA confirmed BUY, `TIME_EXIT`, confirmed SELL, realized P&L, and
-  `BAD_EXECUTION`
-- EN -> ID -> EN without layout errors
-- no BUY, SELL, CLOSE, EXECUTE, or manual cycle controls
+- `DATABASE_URL`
+- `ALPACA_API_KEY`
+- `ALPACA_SECRET_KEY`
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_DEPLOYMENT`
+- `NVIDIA_API_KEY`
 
-Check browser console/network for CORS errors, localhost calls, application
-exceptions, and secret values. Recheck the safe flags after every provider-side
-configuration change. Live-money trading is unsupported.
+The workflow uses a 15-minute UTC cron, a ten-minute job timeout, no retry loop,
+and `cancel-in-progress: false`. Run one manual `workflow_dispatch` smoke test
+after the secrets exist. A successful run must finish, persist one OBSERVE
+`AgentCycle`, and submit zero Alpaca orders.
+
+## Final verification
+
+Check:
+
+```text
+GET  <api>/health
+GET  <api>/api/agent/status
+GET  <api>/api/regret/metrics
+GET  <api>/api/exits
+GET  <api>/api/regret-events
+POST <api>/api/agent/run-once  -> 403
+```
+
+Then open the frontend and verify DUO `AVOIDED_LOSS`, BIAF `MISSED_ALPHA`, and
+the persisted TSLA BUY -> `TIME_EXIT` -> SELL -> `BAD_EXECUTION` replay in EN
+and ID. Confirm there are no manual BUY, SELL, or CLOSE controls, no localhost
+API traffic, no CORS errors, and no client-visible secrets.
